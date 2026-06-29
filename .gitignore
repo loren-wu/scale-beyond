@@ -1,0 +1,7 @@
+.agents/
+
+# Leftover assets from earlier prototypes; keep them locally but do not include
+# them in the first GitHub snapshot for Scale Beyond.
+assets/desk-ar-scene.png
+assets/forest-bloom.jpg
+assets/forest-dead.jpg

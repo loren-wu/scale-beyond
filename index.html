@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="《尺度之外》MVP：通过滚轮缩放和拖拽视角探索从地球到太阳系的真实 3D 宇宙尺度体验。" />
+  <title>尺度之外 | From Earth to the Multiverse</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="style.css?v=scale-mvp1" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js"
+      }
+    }
+  </script>
+  <script type="module" src="main.js?v=scale-mvp1"></script>
+</head>
+<body>
+  <main class="experience" aria-label="尺度之外 3D 宇宙尺度探索">
+    <div id="scene" class="scene" aria-hidden="true"></div>
+
+    <section class="intro" aria-labelledby="project-title">
+      <p class="kicker">尺度之外</p>
+      <h1 id="project-title">From Earth to the Multiverse</h1>
+    </section>
+
+    <section class="scale-readout" aria-live="polite">
+      <p id="layerName">Planet Surface</p>
+      <strong id="scaleUnit">Low Earth orbit</strong>
+    </section>
+
+    <section class="caption" aria-live="polite">
+      <p id="captionZh">你所看见的，只是其中一个尺度。</p>
+      <p id="captionEn">What you see is only one scale of reality.</p>
+    </section>
+
+    <div id="hint" class="hint" role="note">
+      <span>滚轮缩放</span>
+      <span>拖拽移动视角</span>
+    </div>
+
+    <div class="scale-meter" aria-hidden="true">
+      <span id="scaleBar"></span>
+    </div>
+  </main>
+</body>
+</html>

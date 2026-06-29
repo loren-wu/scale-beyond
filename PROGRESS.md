@@ -5,7 +5,7 @@
 ## 当前阶段
 
 - 阶段：MVP
-- 状态：MVP 层级 1-3 初版已实现、完成浏览器验证，并已推送到 GitHub
+- 状态：MVP 层级 1-3 初版已实现、完成浏览器验证，并已推送到 GitHub；README 已创建
 - 最近更新：2026-06-29
 
 ## 已完成的层级
@@ -20,6 +20,7 @@
 - MVP 浏览器验证：`http://localhost:4173/` 可打开，桌面端 canvas 非空、控制台无错误；滚轮缩放后 `scrollY` 保持 0，尺度可切换到 Solar System；手机宽度 390×844 下 canvas 铺满且 UI 未溢出
 - Git 本地仓库：已初始化 `main` 分支，已创建初始提交 `Initial Scale Beyond MVP`
 - GitHub 远程仓库：已添加 `origin`，并已推送 `main` 到 `https://github.com/loren-wu/scale-beyond.git`
+- 项目 README：已创建 `README.md`，包含项目定位、交互方式、当前 MVP 进度和后续计划
 
 ## 当前卡住的问题
 
@@ -30,10 +31,11 @@
 
 ## 下一步
 
-1. 接入真实 NASA 贴图并建立素材来源记录。
-2. 继续试调太阳系半径/距离压缩、相机距离和 FOV。
-3. MVP 稳定后再考虑按源稿建议拆分 `main.js`。
-4. 后续每完成一个可独立交付点，更新本文件、提交并推送。
+1. 开启 GitHub Pages，让 `index.html` 作为在线网页作品访问。
+2. 接入真实 NASA 贴图并建立素材来源记录。
+3. 继续试调太阳系半径/距离压缩、相机距离和 FOV。
+4. MVP 稳定后再考虑按源稿建议拆分 `main.js`。
+5. 后续每完成一个可独立交付点，更新本文件、提交并推送。
 
 ## 更新日志
 
@@ -43,3 +45,4 @@
 - 2026-06-29：初始化本地 Git 仓库，分支改为 `main`，首个提交为 `Initial Scale Beyond MVP`；旧原型图片和 `.agents/` 已通过 `.gitignore` 排除。
 - 2026-06-29：收到 GitHub 仓库地址 `https://github.com/loren-wu/scale-beyond.git`，准备添加 remote 并推送。
 - 2026-06-29：添加 `origin` remote，成功推送 `main` 到 GitHub，并设置本地 `main` 跟踪 `origin/main`。
+- 2026-06-29：创建 `README.md`，补充项目定位、交互方式、MVP 进度和后续计划。

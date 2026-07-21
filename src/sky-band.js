@@ -41,7 +41,7 @@ export function createSkyBand({
   const root = new THREE.Group();
   root.name = 'Solar-system Milky Way sky band';
   root.position.set(0, compact ? -12 : -22, -30);
-  root.rotation.set(-0.025, 0, THREE.MathUtils.degToRad(-7.5));
+  root.rotation.set(-0.035, 0, THREE.MathUtils.degToRad(-24));
   root.visible = false;
 
   const radius = compact ? 1180 : 1320;
@@ -71,7 +71,7 @@ export function createSkyBand({
     opacity: { value: 0 },
     time: { value: 0 },
     viewportAspect: { value: viewportAspect },
-    tint: { value: new THREE.Color(0xd8e5ff) }
+    detail: { value: compact ? 0 : 1 }
   };
 
   const material = new THREE.ShaderMaterial({
@@ -81,7 +81,9 @@ export function createSkyBand({
     depthWrite: false,
     depthTest: false,
     side: THREE.BackSide,
-    blending: THREE.AdditiveBlending,
+    // Normal blending preserves the dust rift and the black level of space.
+    // The old fully-additive pass made every overlapping cloud trend to white.
+    blending: THREE.NormalBlending,
     toneMapped: true,
     vertexShader: `
       varying vec2 vUv;
@@ -96,7 +98,7 @@ export function createSkyBand({
       uniform float opacity;
       uniform float time;
       uniform float viewportAspect;
-      uniform vec3 tint;
+      uniform float detail;
       varying vec2 vUv;
 
       float hash21(vec2 point) {
@@ -105,32 +107,114 @@ export function createSkyBand({
         return fract(point.x * point.y);
       }
 
+      float valueNoise(vec2 point) {
+        vec2 cell = floor(point);
+        vec2 local = fract(point);
+        local = local * local * (3.0 - 2.0 * local);
+        float a = hash21(cell);
+        float b = hash21(cell + vec2(1.0, 0.0));
+        float c = hash21(cell + vec2(0.0, 1.0));
+        float d = hash21(cell + vec2(1.0, 1.0));
+        return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
+      }
+
+      float cloudNoise(vec2 point) {
+        float value = valueNoise(point) * 0.57;
+        value += valueNoise(point * 2.03 + 13.7) * 0.29;
+        value += valueNoise(point * 4.11 + 29.1) * 0.14 * mix(0.35, 1.0, detail);
+        return value;
+      }
+
       void main() {
-        float drift = sin(time * 0.024) * 0.0018;
-        vec2 sampleUv = vec2(clamp(vUv.x + drift, 0.002, 0.998), vUv.y);
+        const float PI = 3.14159265359;
+        float x = vUv.x;
+        float slowDrift = sin(time * 0.021) * 0.0015;
+
+        // Re-map the rectangular source around an uneven, gently curved spine.
+        // The broad bow reads at a distance while the two smaller frequencies
+        // keep it from looking like a rotated ruler.
+        float broadBow = sin((x - 0.08) * PI) * 0.036;
+        float midWave = sin(x * 6.28318 + 0.72) * 0.017;
+        float fineWave = sin(x * 17.1 + 1.4) * 0.006;
+        float centerLine = 0.495 + broadBow - midWave + fineWave;
+
+        float widthNoise = cloudNoise(vec2(x * 5.2 + 3.0, 1.7));
+        float widthRhythm = sin(x * 7.4 - 0.8) * 0.055 + sin(x * 15.7) * 0.022;
+        float halfWidth = 0.39 * (0.84 + widthNoise * 0.17 + widthRhythm);
+        float localY = (vUv.y - centerLine) / max(halfWidth, 0.26);
+        vec2 sampleUv = vec2(
+          clamp(x + slowDrift, 0.003, 0.997),
+          // Crop the source vertically so the photographed galactic plane has
+          // enough apparent width to read as a sky feature, not a hairline.
+          clamp(0.5 + localY * 0.34, 0.003, 0.997)
+        );
         vec4 texel = texture2D(map, sampleUv);
 
-        float horizontalFeather = smoothstep(0.015, 0.115, vUv.x)
-          * (1.0 - smoothstep(0.885, 0.985, vUv.x));
-        float verticalFeather = smoothstep(0.025, 0.255, vUv.y)
-          * (1.0 - smoothstep(0.745, 0.975, vUv.y));
-        float feather = horizontalFeather * verticalFeather;
+        float edgeNoise = cloudNoise(vec2(x * 9.0 + 21.0, localY * 2.5 + 8.0));
+        float irregularEdge = abs(localY) + (edgeNoise - 0.5) * 0.14;
+        float bandFeather = 1.0 - smoothstep(0.61, 1.0, irregularEdge);
+        float horizontalFeather = smoothstep(0.012, 0.105, x)
+          * (1.0 - smoothstep(0.895, 0.988, x));
+        float feather = bandFeather * horizontalFeather;
 
         float luminance = dot(texel.rgb, vec3(0.2126, 0.7152, 0.0722));
-        float structure = smoothstep(0.012, 0.31, luminance);
-        float dimCloud = smoothstep(0.018, 0.13, luminance) * 0.2;
+        float structure = smoothstep(0.009, 0.265, luminance);
+        float dimCloud = smoothstep(0.012, 0.105, luminance) * 0.24;
 
-        // A very sparse, stable dusting of sub-pixel stars keeps the photograph
-        // connected to the procedural star field without turning it into neon.
-        vec2 starGrid = floor(vUv * vec2(820.0, 255.0));
+        // A wandering primary rift plus broken secondary filaments create the
+        // recognizable dark river through the Milky Way without a hard stripe.
+        float dustField = cloudNoise(vec2(x * 11.5 + 2.4, localY * 5.0 + 17.0));
+        float dustWander = sin(x * 14.3 + 0.6) * 0.038
+          + sin(x * 31.0) * 0.014
+          + (dustField - 0.5) * 0.045;
+        float dustWidth = 0.105 + cloudNoise(vec2(x * 8.0, 33.0)) * 0.045;
+        float mainRift = 1.0 - smoothstep(dustWidth, dustWidth * 2.45, abs(localY - dustWander));
+        float upperFilamentCenter = dustWander + 0.21 + sin(x * 20.0) * 0.035;
+        float lowerFilamentCenter = dustWander - 0.23 + sin(x * 16.0 + 2.2) * 0.028;
+        float upperFilament = (1.0 - smoothstep(0.025, 0.075, abs(localY - upperFilamentCenter)))
+          * smoothstep(0.43, 0.72, dustField);
+        float lowerFilament = (1.0 - smoothstep(0.02, 0.065, abs(localY - lowerFilamentCenter)))
+          * smoothstep(0.5, 0.78, 1.0 - dustField);
+        float dust = clamp(mainRift * 0.88 + upperFilament * 0.34 + lowerFilament * 0.28, 0.0, 0.92);
+
+        // Warm stellar core, cooler outer clouds and a restrained violet-blue
+        // transition mirror the visible-light palette without flattening it.
+        float coreX = exp(-pow((x - 0.53) / 0.175, 2.0));
+        float coreY = exp(-pow(localY / 0.62, 2.0));
+        float warmCore = coreX * coreY;
+        float coolCloud = (1.0 - coreX * 0.72) * smoothstep(0.035, 0.3, luminance);
+        vec3 coolGrade = vec3(0.72, 0.91, 1.2);
+        vec3 warmGrade = vec3(1.2, 0.89, 0.64);
+        vec3 grade = mix(vec3(0.9, 0.98, 1.06), coolGrade, coolCloud * 0.48);
+        grade = mix(grade, warmGrade, warmCore * 0.72);
+        vec3 color = pow(max(texel.rgb, vec3(0.0)), vec3(0.8)) * grade * 1.22;
+
+        float blueNebula = smoothstep(0.54, 0.83, cloudNoise(vec2(x * 7.0 + 41.0, localY * 4.0)))
+          * coolCloud * structure;
+        float amberNebula = smoothstep(0.58, 0.84, cloudNoise(vec2(x * 9.0 + 7.0, localY * 3.4 + 9.0)))
+          * warmCore * structure;
+        color += vec3(0.1, 0.22, 0.46) * blueNebula * 0.24;
+        color += vec3(0.5, 0.19, 0.045) * amberNebula * 0.22;
+        color *= 1.0 - dust * 0.7;
+
+        // Sparse circular specks, not whole bright grid cells. Compact mode uses
+        // fewer candidates and skips the finest cloud-noise octave above.
+        vec2 starScale = mix(vec2(760.0, 250.0), vec2(840.0, 275.0), detail);
+        vec2 starPosition = sampleUv * starScale;
+        vec2 starGrid = floor(starPosition);
+        vec2 starLocal = fract(starPosition) - 0.5;
         float starSeed = hash21(starGrid);
-        float star = smoothstep(0.9965, 1.0, starSeed);
-        float twinkle = 0.76 + 0.24 * sin(time * 0.42 + starSeed * 31.0);
-        star *= twinkle * mix(0.78, 1.0, clamp(viewportAspect, 0.45, 1.0));
+        float starCandidate = smoothstep(mix(0.9975, 0.9962, detail), 1.0, starSeed);
+        float starShape = 1.0 - smoothstep(0.035, 0.2, length(starLocal));
+        float twinkle = 0.82 + 0.18 * sin(time * 0.36 + starSeed * 35.0);
+        float star = starCandidate * starShape * twinkle
+          * mix(0.78, 1.0, clamp(viewportAspect, 0.45, 1.0));
+        vec3 starColor = mix(vec3(0.7, 0.82, 1.0), vec3(1.0, 0.83, 0.62), hash21(starGrid + 9.3));
+        color += starColor * star * 0.68;
 
-        vec3 color = texel.rgb * tint * 1.16;
-        color += vec3(0.62, 0.75, 1.0) * star * 0.3;
-        float alpha = (structure * 0.84 + dimCloud + star * 0.24) * feather * opacity;
+        float cloudAlpha = structure * 0.72 + dimCloud;
+        float alpha = (cloudAlpha * (1.0 - dust * 0.2) + star * 0.48) * feather * opacity;
+        color = min(color, vec3(1.28));
 
         if (alpha < 0.001) discard;
         gl_FragColor = vec4(color, alpha);

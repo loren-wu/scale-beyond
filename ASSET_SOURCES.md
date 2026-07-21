@@ -33,7 +33,7 @@ The 3D galaxies are procedural visualizations, not direct NASA images and not st
 - NASA/JPL-Caltech Spitzer **GLIMPSE 360** panorama: https://www.spitzer.caltech.edu/image/ssc2014-02a-glimpse-the-galaxy-all-the-way-around
 - NASA Great Observatories Milky Way center composite, image PIA12348: https://images.nasa.gov/details/PIA12348
 
-The Milky Way layer uses a central bar/bulge, four primary spiral-arm traces, dust-lane gaps, star-forming regions, a thin disk, and a sparse stellar halo. The Local Group layout includes the Milky Way, Andromeda (M31), Triangulum (M33), the Large and Small Magellanic Clouds, and a selection of dwarf companions. Distances are presented as an intentionally compressed, experience-led view.
+The Milky Way layer uses a central bar/bulge, four unequal primary spiral-arm traces, fragmented dust lanes, blue and pink star-forming regions, thin and thick disks, a stellar halo, and a procedural population of globular clusters. The Local Group layout distinguishes the morphology of the Milky Way, Andromeda (M31), Triangulum (M33), and the Large and Small Magellanic Clouds; it also includes 18 named dwarf companions spanning compact elliptical, dwarf spheroidal, irregular, and ultra-diffuse forms. A single-draw shader field adds distant disk and elliptical galaxies for depth. Distances, sizes, surface brightness, and galaxy counts are intentionally compressed for the experience and are not a survey-complete simulation.
 
 ## Usage Notes
 

@@ -5,7 +5,7 @@
 ## 当前阶段
 
 - 阶段：第五阶段 · 全场景真实感、银河系群与交互手感旗舰级精修
-- 状态：本轮视觉与控制升级已完成，桌面端和手机端验收通过，等待提交并发布 `scale-cosmic5`
+- 状态：`scale-cosmic5` 已完成视觉与控制升级、桌面/手机验收，并发布到 GitHub Pages
 - 最近更新：2026-07-21
 - 项目：纯静态 HTML / CSS / JavaScript + Three.js `0.165.0`，无构建步骤
 - 仓库：`https://github.com/loren-wu/scale-beyond.git`
@@ -71,20 +71,21 @@
 
 ## 发布状态
 
-- 当前稳定线上版本：`scale-cosmic4`
-- 本轮缓存版本：`scale-cosmic5`
-- 本轮提交与 GitHub Pages 验证：待完成
+- 当前稳定线上版本：`scale-cosmic5`
+- 旗舰升级提交：`f7dfbbf`（`Overhaul Scale Beyond cosmic visuals and controls`）
+- GitHub Pages 已确认返回 `scale-cosmic5`，旧版 `scale-cosmic4` 标识已消失。
+- `main.js`、控制器、银河/行星/天幕模块、Three.js，以及关键 NASA 与原创银河资源均在线返回 HTTP 200。
+- 线上首屏已在真实浏览器打开并截图确认；本地完整桌面/手机旅程仍保持无 warning、无 error、无 WebGL Shader 编译错误。
 - 仓库中存在与本项目无关的未跟踪脚本、安装包、文档和备份；提交时只能精确暂存 Scale Beyond 文件，禁止 `git add -A`。
 
 ## 下一步
 
-1. 精确暂存本轮项目文件，提交并推送 `main`。
-2. 确认 GitHub Pages 返回 `scale-cosmic5`，并检查关键 JS / NASA / 银河资源 HTTP 200。
-3. 后续再考虑自动帧率采样、动态质量降级，以及本超星系团 / 宇宙网阶段。
+1. 后续可加入自动帧率采样和动态质量降级，让低端移动设备在保留构图的同时主动控制粒子预算。
+2. 如继续扩展尺度，可新增本超星系团 / 拉尼亚凯亚 / 宇宙网阶段，但保持现有七段旅程的节奏与控制逻辑。
 
 ## 主要历史检查点
 
 - 2026-06-29：完成 Three.js MVP、Git 初始化、GitHub Pages 与 NASA 纹理 fallback 结构。
 - 2026-07-21：完成七段旅程、地球昼夜、太阳系、银河系、本星系群与首次桌面/手机验收。
 - 2026-07-21：完成原创可见光银河天幕、Spitzer GLIMPSE 360、黄道光、日球层、柯伊伯带和纪录片式文案排版，发布 `scale-cosmic4`。
-- 2026-07-21：完成全场景真实感、星系多样性、深空星系场和控制系统重构，进入 `scale-cosmic5` 发布阶段。
+- 2026-07-21：完成全场景真实感、星系多样性、深空星系场和控制系统重构，以 `f7dfbbf` 发布 `scale-cosmic5` 并通过线上资源验证。

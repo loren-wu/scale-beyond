@@ -54,6 +54,7 @@ body,
 .caption,
 .hint,
 .asset-status,
+.location-marker,
 .scale-meter {
   position: fixed;
   z-index: 2;
@@ -184,6 +185,45 @@ h1 {
   opacity: 0.7;
 }
 
+.location-marker {
+  right: clamp(18px, 4vw, 58px);
+  top: 50%;
+  margin: 0;
+  padding-right: 22px;
+  color: rgba(215, 229, 255, 0.48);
+  font-size: 0.62rem;
+  letter-spacing: 0.13em;
+  line-height: 1.6;
+  text-align: right;
+  opacity: 0;
+  transform: translateY(-42%);
+  transition: opacity 700ms ease, transform 700ms ease;
+}
+
+.location-marker::after {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(255, 207, 119, 0.7);
+  border-radius: 50%;
+  box-shadow: 0 0 18px rgba(255, 188, 91, 0.72);
+  content: "";
+}
+
+.location-marker span {
+  display: block;
+  color: rgba(255, 224, 170, 0.82);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.location-marker.is-visible {
+  opacity: 1;
+  transform: translateY(-50%);
+}
+
 .scale-meter {
   left: clamp(18px, 4vw, 58px);
   right: clamp(18px, 4vw, 58px);
@@ -224,9 +264,12 @@ h1 {
   content: "";
 }
 
-.scale-meter i:first-of-type,
+.scale-meter i:first-of-type {
+  transform: translate(0, 14px);
+}
+
 .scale-meter i:last-of-type {
-  color: transparent;
+  transform: translate(-100%, 14px);
 }
 
 @media (max-width: 760px) {
@@ -277,8 +320,13 @@ h1 {
     display: none;
   }
 
+  .location-marker {
+    display: none;
+  }
+
   .scale-meter i:nth-of-type(2),
-  .scale-meter i:nth-of-type(3) {
+  .scale-meter i:nth-of-type(3),
+  .scale-meter i:nth-of-type(4) {
     color: transparent;
   }
 }

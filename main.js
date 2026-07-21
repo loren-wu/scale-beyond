@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { createPlanetTexture, createRingMaterial, createSunTexture } from './src/planet-textures.js';
+import { createCosmicEnvironment } from './src/galaxy.js';
 
 const container = document.getElementById('scene');
 const layerName = document.getElementById('layerName');
@@ -9,9 +11,11 @@ const hint = document.getElementById('hint');
 const scaleBar = document.getElementById('scaleBar');
 const distanceValue = document.getElementById('distanceValue');
 const assetStatus = document.getElementById('assetStatus');
+const locationMarker = document.getElementById('locationMarker');
 
 const EARTH_RADIUS = 8;
-const MAX_SCALE = 800;
+const MAX_SCALE = 1800;
+const compactMode = window.innerWidth < 760;
 
 const TEXTURE_SOURCES = {
   earth: [
@@ -25,6 +29,14 @@ const TEXTURE_SOURCES = {
   moon: [
     'assets/nasa/moon-lroc-color-2048.jpg',
     'https://svs.gsfc.nasa.gov/vis/a000000/a004700/a004720/lroc_color_2k.jpg'
+  ],
+  earthNight: [
+    'assets/nasa/earth-black-marble-3600.jpg',
+    'https://eoimages.gsfc.nasa.gov/images/imagerecords/79000/79765/dnb_land_ocean_ice.2012.3600x1800.jpg'
+  ],
+  milkyWayCenter: [
+    'assets/nasa/milky-way-center-multiwavelength.jpg',
+    'https://images-assets.nasa.gov/image/PIA12348/PIA12348~large.jpg'
   ]
 };
 
@@ -59,7 +71,7 @@ if (window.matchMedia('(pointer: coarse)').matches) {
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x02040a, 0.0018);
 
-const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.05, 3000);
+const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.05, 8000);
 camera.position.set(0, 2, 16);
 
 const renderer = new THREE.WebGLRenderer({
@@ -79,12 +91,14 @@ const clock = new THREE.Clock();
 const world = new THREE.Group();
 const planetGroup = new THREE.Group();
 const solarGroup = new THREE.Group();
-scene.add(world, planetGroup, solarGroup);
+const cosmicGroup = new THREE.Group();
+scene.add(world, planetGroup, solarGroup, cosmicGroup, camera);
 
+const sunDirection = new THREE.Vector3(-18, 4, 4).normalize();
 const sunLight = new THREE.DirectionalLight(0xffffff, 4.6);
-sunLight.position.set(-18, 8, 16);
+sunLight.position.copy(sunDirection).multiplyScalar(42);
 scene.add(sunLight);
-scene.add(new THREE.AmbientLight(0x9fb9d4, 0.08));
+scene.add(new THREE.AmbientLight(0x9fb9d4, 0.075));
 
 const textureAnisotropy = renderer.capabilities.getMaxAnisotropy();
 const textureLoader = new THREE.TextureLoader();
@@ -93,8 +107,9 @@ textureLoader.setCrossOrigin('anonymous');
 const earth = createEarth();
 const clouds = createClouds();
 const atmosphere = createAtmosphere();
+const aurora = createAurora();
 const moonSystem = createMoonSystem();
-planetGroup.add(earth, clouds, atmosphere, moonSystem.root);
+planetGroup.add(earth, clouds, atmosphere, aurora, moonSystem.root);
 
 const starField = createStarField();
 const galaxyGlow = createGalaxyGlow();
@@ -103,39 +118,69 @@ world.add(starField, galaxyGlow);
 const solarSystem = createSolarSystem();
 solarGroup.add(solarSystem.root);
 
+const cosmicEnvironment = createCosmicEnvironment(compactMode);
+cosmicGroup.add(cosmicEnvironment.root);
+
+const nasaBackdrop = createNasaBackdrop();
+camera.add(nasaBackdrop);
+
 const targetLookAt = new THREE.Vector3();
 const currentLookAt = new THREE.Vector3();
 const targetPosition = new THREE.Vector3();
 const currentPosition = new THREE.Vector3().copy(camera.position);
+
+let galaxyOpacity = 0;
+let localGroupOpacity = 0;
 
 const copy = [
   {
     max: 70,
     layer: 'Planet Surface',
     unit: 'Low Earth orbit',
-    zh: '你所看见的，只是其中一个尺度。',
+    zh: '你所看见的，只是现实中的一个尺度。',
     en: 'What you see is only one scale of reality.'
   },
   {
     max: 190,
     layer: 'Planet View',
     unit: '12,742 km',
-    zh: '这里是你熟悉的一切。但它并不是全部。',
-    en: 'This is everything familiar. But it is not everything.'
+    zh: '白昼、夜灯与薄薄的大气，共同包裹着我们熟悉的一切。',
+    en: 'Daylight, city lights and a fragile atmosphere hold everything familiar.'
   },
   {
     max: 380,
-    layer: 'Earth-Moon System',
+    layer: 'Earth–Moon System',
     unit: '384,400 km',
-    zh: '月球并不遥远。直到地球缩小之后，距离才显露出来。',
+    zh: '月球并不遥远。直到地球缩小，距离才显露出来。',
     en: 'The Moon feels close, until Earth becomes small enough for distance to appear.'
   },
   {
-    max: MAX_SCALE + 1,
+    max: 800,
     layer: 'Solar System',
-    unit: '1 AU · 149.6 million km',
-    zh: '距离开始变得难以直觉理解。熟悉的世界，正在缩成一个光点。',
-    en: 'Distance begins to escape intuition. The familiar world becomes a point of light.'
+    unit: '30 AU · Neptune orbit',
+    zh: '八颗行星沿着同一片古老的盘面，围绕一颗普通恒星运行。',
+    en: 'Eight planets trace an ancient disk around one ordinary star.'
+  },
+  {
+    max: 1050,
+    layer: 'Stellar Neighborhood',
+    unit: '4.24 light-years',
+    zh: '越过日球层，太阳也只是一颗沉入银河背景的星。',
+    en: 'Beyond the heliosphere, the Sun becomes one star in the Milky Way.'
+  },
+  {
+    max: 1450,
+    layer: 'Milky Way',
+    unit: '≈ 100,000 light-years',
+    zh: '我们位于猎户臂的一段支脉，距银河中心约二万七千光年。',
+    en: 'We live on the Orion Spur, about 27,000 light-years from the galactic center.'
+  },
+  {
+    max: MAX_SCALE + 1,
+    layer: 'Local Group',
+    unit: '≈ 10 million light-years',
+    zh: '银河系不是孤岛。仙女座、三角座与数十个矮星系共享同一片引力海洋。',
+    en: 'The Milky Way is not alone. A family of galaxies shares the same gravitational sea.'
   }
 ];
 
@@ -143,13 +188,24 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-function mix(a, b, t) {
-  return a + (b - a) * t;
+function mix(a, b, amount) {
+  return a + (b - a) * amount;
 }
 
 function smoothstep(edge0, edge1, value) {
-  const x = clamp((value - edge0) / (edge1 - edge0), 0, 1);
-  return x * x * (3 - 2 * x);
+  const normalized = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return normalized * normalized * (3 - 2 * normalized);
+}
+
+function seededRandom(seed) {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6d2b79f5;
+    let result = value;
+    result = Math.imul(result ^ (result >>> 15), result | 1);
+    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
+    return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 function makeCanvasTexture(size, painter) {
@@ -189,7 +245,7 @@ function refreshAssetStatus() {
   assetStatus.classList.add('is-ready');
 }
 
-function applyTexture(material, sources, label, options = {}) {
+function loadTexture(sources, label, onLoad) {
   textureState.pending += 1;
 
   const attempt = (sourceIndex) => {
@@ -197,17 +253,7 @@ function applyTexture(material, sources, label, options = {}) {
       sources[sourceIndex],
       (texture) => {
         configureTexture(texture);
-        const previousMap = material.map;
-        material.map = texture;
-        if (options.useAsAlphaMap) {
-          material.alphaMap = texture;
-        }
-        material.needsUpdate = true;
-
-        if (previousMap?.isCanvasTexture) {
-          previousMap.dispose();
-        }
-
+        onLoad(texture);
         textureState.pending -= 1;
         if (sourceIndex === 0) textureState.loadedLocal += 1;
         else textureState.loadedRemote += 1;
@@ -219,7 +265,6 @@ function applyTexture(material, sources, label, options = {}) {
           attempt(sourceIndex + 1);
           return;
         }
-
         textureState.pending -= 1;
         textureState.fallback += 1;
         console.warn(`Texture failed to load, keeping procedural fallback: ${label}`);
@@ -231,88 +276,169 @@ function applyTexture(material, sources, label, options = {}) {
   attempt(0);
 }
 
+function applyTexture(material, sources, label, options = {}) {
+  loadTexture(sources, label, (texture) => {
+    const previousMap = material.map;
+    material.map = texture;
+    if (options.useAsAlphaMap) material.alphaMap = texture;
+    material.needsUpdate = true;
+    if (previousMap?.isCanvasTexture) previousMap.dispose();
+  });
+}
+
 function createEarthTexture() {
-  return makeCanvasTexture(2048, (ctx, width, height) => {
-    const ocean = ctx.createLinearGradient(0, 0, width, height);
+  return makeCanvasTexture(compactMode ? 1024 : 2048, (context, width, height) => {
+    const random = seededRandom(92841);
+    const ocean = context.createLinearGradient(0, 0, width, height);
     ocean.addColorStop(0, '#0b2f57');
     ocean.addColorStop(0.44, '#123f69');
     ocean.addColorStop(1, '#07182e');
-    ctx.fillStyle = ocean;
-    ctx.fillRect(0, 0, width, height);
+    context.fillStyle = ocean;
+    context.fillRect(0, 0, width, height);
 
     const landColors = ['#3d6f52', '#5f7f55', '#8a805d', '#c6b885', '#314f3f'];
-    for (let i = 0; i < 42; i += 1) {
-      const x = Math.random() * width;
-      const y = height * (0.16 + Math.random() * 0.68);
-      const radiusX = width * (0.035 + Math.random() * 0.12);
-      const radiusY = height * (0.025 + Math.random() * 0.12);
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate((Math.random() - 0.5) * 1.4);
-      ctx.beginPath();
-      ctx.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
-      ctx.fillStyle = landColors[Math.floor(Math.random() * landColors.length)];
-      ctx.globalAlpha = 0.5 + Math.random() * 0.38;
-      ctx.fill();
-      ctx.restore();
+    for (let index = 0; index < 42; index += 1) {
+      const x = random() * width;
+      const y = height * (0.16 + random() * 0.68);
+      const radiusX = width * (0.035 + random() * 0.12);
+      const radiusY = height * (0.025 + random() * 0.12);
+      context.save();
+      context.translate(x, y);
+      context.rotate((random() - 0.5) * 1.4);
+      context.beginPath();
+      context.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
+      context.fillStyle = landColors[Math.floor(random() * landColors.length)];
+      context.globalAlpha = 0.5 + random() * 0.38;
+      context.fill();
+      context.restore();
     }
 
-    ctx.globalAlpha = 0.75;
-    ctx.fillStyle = '#d8e1df';
-    ctx.fillRect(0, 0, width, height * 0.07);
-    ctx.fillRect(0, height * 0.93, width, height * 0.07);
+    context.globalAlpha = 0.75;
+    context.fillStyle = '#d8e1df';
+    context.fillRect(0, 0, width, height * 0.07);
+    context.fillRect(0, height * 0.93, width, height * 0.07);
+    context.globalAlpha = 1;
+  });
+}
 
-    for (let i = 0; i < 110; i += 1) {
-      const x = Math.random() * width;
-      const y = Math.random() * height;
-      const length = width * (0.025 + Math.random() * 0.08);
-      ctx.strokeStyle = `rgba(210, 225, 220, ${0.08 + Math.random() * 0.13})`;
-      ctx.lineWidth = 1 + Math.random() * 2;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.bezierCurveTo(x + length * 0.35, y - 20, x + length * 0.65, y + 16, x + length, y);
-      ctx.stroke();
+function createEarthNightTexture() {
+  return makeCanvasTexture(compactMode ? 1024 : 2048, (context, width, height) => {
+    const random = seededRandom(381991);
+    context.fillStyle = '#01040a';
+    context.fillRect(0, 0, width, height);
+    context.globalCompositeOperation = 'screen';
+    for (let index = 0; index < 950; index += 1) {
+      const latitudeBias = Math.pow(random(), 0.76);
+      const hemisphere = random() > 0.5 ? 1 : -1;
+      const x = random() * width;
+      const y = height * (0.5 + hemisphere * latitudeBias * 0.32);
+      const radius = 0.3 + random() * 2.2;
+      context.globalAlpha = 0.08 + random() * 0.5;
+      context.fillStyle = random() > 0.12 ? '#ffca75' : '#9cc9ff';
+      context.beginPath();
+      context.arc(x, y, radius, 0, Math.PI * 2);
+      context.fill();
     }
+    context.globalAlpha = 1;
+    context.globalCompositeOperation = 'source-over';
   });
 }
 
 function createCloudTexture() {
-  return makeCanvasTexture(1536, (ctx, width, height) => {
-    ctx.clearRect(0, 0, width, height);
-    for (let i = 0; i < 240; i += 1) {
-      const x = Math.random() * width;
-      const y = Math.random() * height;
-      const length = width * (0.025 + Math.random() * 0.09);
-      const alpha = 0.08 + Math.random() * 0.28;
-      const gradient = ctx.createRadialGradient(x, y, 0, x, y, length);
+  return makeCanvasTexture(compactMode ? 768 : 1536, (context, width, height) => {
+    const random = seededRandom(57429);
+    context.clearRect(0, 0, width, height);
+    for (let index = 0; index < 240; index += 1) {
+      const x = random() * width;
+      const y = random() * height;
+      const length = width * (0.025 + random() * 0.09);
+      const alpha = 0.08 + random() * 0.28;
+      const gradient = context.createRadialGradient(x, y, 0, x, y, length);
       gradient.addColorStop(0, `rgba(255,255,255,${alpha})`);
       gradient.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.ellipse(x, y, length, length * (0.16 + Math.random() * 0.28), (Math.random() - 0.5) * 1.2, 0, Math.PI * 2);
-      ctx.fill();
+      context.fillStyle = gradient;
+      context.beginPath();
+      context.ellipse(x, y, length, length * (0.16 + random() * 0.28), (random() - 0.5) * 1.2, 0, Math.PI * 2);
+      context.fill();
     }
   });
 }
 
 function createEarth() {
-  const geometry = new THREE.SphereGeometry(EARTH_RADIUS, 128, 96);
-  const material = new THREE.MeshStandardMaterial({
-    map: createEarthTexture(),
-    roughness: 0.82,
-    metalness: 0,
-    color: 0xffffff
+  const dayTexture = createEarthTexture();
+  const nightTexture = createEarthNightTexture();
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    uniforms: {
+      dayMap: { value: dayTexture },
+      nightMap: { value: nightTexture },
+      sunDirection: { value: sunDirection.clone() },
+      opacity: { value: 1 }
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying vec3 vViewNormal;
+      varying vec3 vViewPosition;
+
+      void main() {
+        vUv = uv;
+        vViewNormal = normalize(normalMatrix * normal);
+        vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+        vViewPosition = viewPosition.xyz;
+        gl_Position = projectionMatrix * viewPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D dayMap;
+      uniform sampler2D nightMap;
+      uniform vec3 sunDirection;
+      uniform float opacity;
+      varying vec2 vUv;
+      varying vec3 vViewNormal;
+      varying vec3 vViewPosition;
+
+      void main() {
+        vec3 normal = normalize(vViewNormal);
+        vec3 lightDirection = normalize((viewMatrix * vec4(sunDirection, 0.0)).xyz);
+        vec3 viewDirection = normalize(-vViewPosition);
+        float sunAmount = dot(normal, lightDirection);
+        float dayBlend = smoothstep(-0.88, -0.12, sunAmount);
+        float daylight = 0.55 + max(sunAmount + 0.15, 0.0) * 0.65;
+        vec3 dayColor = texture2D(dayMap, vUv).rgb;
+        vec3 nightColor = texture2D(nightMap, vUv).rgb * 3.2;
+        float oceanMask = smoothstep(0.035, 0.22, dayColor.b - max(dayColor.r, dayColor.g) * 0.72);
+        vec3 reflected = reflect(-lightDirection, normal);
+        float specular = pow(max(dot(reflected, viewDirection), 0.0), 54.0) * oceanMask * max(sunAmount, 0.0);
+        float twilight = exp(-abs(sunAmount) * 22.0) * 0.07;
+        vec3 color = mix(nightColor, dayColor * daylight, dayBlend);
+        color += vec3(0.5, 0.68, 0.92) * specular * 0.72;
+        color += vec3(1.0, 0.34, 0.11) * twilight;
+        gl_FragColor = vec4(color, opacity);
+      }
+    `
   });
-  applyTexture(material, TEXTURE_SOURCES.earth, 'Blue Marble Earth');
-  return new THREE.Mesh(geometry, material);
+
+  loadTexture(TEXTURE_SOURCES.earth, 'Blue Marble Earth', (texture) => {
+    const previous = material.uniforms.dayMap.value;
+    material.uniforms.dayMap.value = texture;
+    if (previous?.isCanvasTexture) previous.dispose();
+  });
+  loadTexture(TEXTURE_SOURCES.earthNight, 'Black Marble Earth at night', (texture) => {
+    const previous = material.uniforms.nightMap.value;
+    material.uniforms.nightMap.value = texture;
+    if (previous?.isCanvasTexture) previous.dispose();
+  });
+
+  return new THREE.Mesh(new THREE.SphereGeometry(EARTH_RADIUS, compactMode ? 96 : 128, compactMode ? 64 : 96), material);
 }
 
 function createClouds() {
-  const geometry = new THREE.SphereGeometry(EARTH_RADIUS * 1.012, 128, 96);
+  const geometry = new THREE.SphereGeometry(EARTH_RADIUS * 1.012, compactMode ? 96 : 128, compactMode ? 64 : 96);
   const material = new THREE.MeshStandardMaterial({
     map: createCloudTexture(),
     transparent: true,
-    opacity: 0.55,
+    opacity: 0.54,
+    alphaTest: 0.018,
     depthWrite: false,
     roughness: 1
   });
@@ -321,41 +447,93 @@ function createClouds() {
 }
 
 function createAtmosphere() {
-  const geometry = new THREE.SphereGeometry(EARTH_RADIUS * 1.055, 128, 96);
+  const geometry = new THREE.SphereGeometry(EARTH_RADIUS * 1.06, compactMode ? 96 : 128, compactMode ? 64 : 96);
   const material = new THREE.ShaderMaterial({
     transparent: true,
     blending: THREE.AdditiveBlending,
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
-      glowColor: { value: new THREE.Color(0x7fbfff) },
+      sunDirection: { value: sunDirection.clone() },
       intensity: { value: 0.92 }
     },
     vertexShader: `
-      varying vec3 vNormal;
+      varying vec3 vWorldNormal;
       varying vec3 vWorldPosition;
 
       void main() {
-        vNormal = normalize(normalMatrix * normal);
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
         vec4 worldPosition = modelMatrix * vec4(position, 1.0);
         vWorldPosition = worldPosition.xyz;
         gl_Position = projectionMatrix * viewMatrix * worldPosition;
       }
     `,
     fragmentShader: `
-      uniform vec3 glowColor;
+      uniform vec3 sunDirection;
       uniform float intensity;
-      varying vec3 vNormal;
+      varying vec3 vWorldNormal;
       varying vec3 vWorldPosition;
 
       void main() {
+        vec3 normal = normalize(vWorldNormal);
         vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-        float rim = pow(1.0 - max(dot(vNormal, viewDirection), 0.0), 2.4);
-        gl_FragColor = vec4(glowColor, rim * intensity);
+        float rim = pow(1.0 - abs(dot(normal, viewDirection)), 2.35);
+        float sunAmount = dot(normal, normalize(sunDirection));
+        float daylight = smoothstep(-0.3, 0.45, sunAmount);
+        float terminator = exp(-abs(sunAmount) * 16.0);
+        vec3 color = mix(vec3(0.13, 0.34, 0.95), vec3(0.42, 0.76, 1.0), daylight);
+        color += vec3(1.0, 0.24, 0.07) * terminator * 0.2;
+        gl_FragColor = vec4(color, rim * intensity * (0.34 + daylight * 0.66));
       }
     `
   });
   return new THREE.Mesh(geometry, material);
+}
+
+function createAurora() {
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      time: { value: 0 },
+      intensity: { value: 0.64 },
+      sunDirection: { value: sunDirection.clone() }
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying vec3 vWorldNormal;
+      void main() {
+        vUv = uv;
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float time;
+      uniform float intensity;
+      uniform vec3 sunDirection;
+      varying vec2 vUv;
+      varying vec3 vWorldNormal;
+
+      void main() {
+        float latitude = abs(vUv.y - 0.5) * 2.0;
+        float polarBand = smoothstep(0.52, 0.7, latitude) * (1.0 - smoothstep(0.86, 0.985, latitude));
+        float waveA = 0.5 + 0.5 * sin(vUv.x * 72.0 + time * 0.7 + sin(vUv.x * 17.0) * 2.0);
+        float waveB = 0.5 + 0.5 * sin(vUv.x * 133.0 - time * 0.42);
+        float curtains = smoothstep(0.28, 0.94, waveA * 0.68 + waveB * 0.32);
+        float night = 1.0 - smoothstep(-0.18, 0.42, dot(normalize(vWorldNormal), normalize(sunDirection)));
+        vec3 color = mix(vec3(0.16, 1.0, 0.54), vec3(0.38, 0.68, 1.0), waveB);
+        float alpha = polarBand * (0.16 + curtains * 0.84) * (0.3 + night * 0.7) * intensity;
+        gl_FragColor = vec4(color, alpha);
+      }
+    `
+  });
+  return new THREE.Mesh(
+    new THREE.SphereGeometry(EARTH_RADIUS * 1.028, compactMode ? 96 : 128, compactMode ? 64 : 96),
+    material
+  );
 }
 
 function createMoonSystem() {
@@ -411,23 +589,24 @@ function createGalaxyGlow() {
 }
 
 function createStarField() {
-  const count = window.innerWidth < 760 ? 4500 : 9000;
+  const random = seededRandom(14793);
+  const count = compactMode ? 4500 : 9000;
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const color = new THREE.Color();
 
-  for (let i = 0; i < count; i += 1) {
-    const radius = 520 + Math.random() * 1150;
-    const theta = Math.random() * Math.PI * 2;
-    const phi = Math.acos(2 * Math.random() - 1);
-    positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
-    positions[i * 3 + 1] = radius * Math.cos(phi);
-    positions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
+  for (let index = 0; index < count; index += 1) {
+    const radius = 520 + random() * 1150;
+    const theta = random() * Math.PI * 2;
+    const phi = Math.acos(2 * random() - 1);
+    positions[index * 3] = radius * Math.sin(phi) * Math.cos(theta);
+    positions[index * 3 + 1] = radius * Math.cos(phi);
+    positions[index * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
 
-    color.setHSL(0.56 + Math.random() * 0.08, 0.12, 0.62 + Math.random() * 0.28);
-    colors[i * 3] = color.r;
-    colors[i * 3 + 1] = color.g;
-    colors[i * 3 + 2] = color.b;
+    color.setHSL(0.56 + random() * 0.08, 0.12, 0.62 + random() * 0.28);
+    colors[index * 3] = color.r;
+    colors[index * 3 + 1] = color.g;
+    colors[index * 3 + 2] = color.b;
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -447,8 +626,8 @@ function createStarField() {
 function createOrbit(radius, color = 0x9ba9b6) {
   const points = [];
   const segments = 180;
-  for (let i = 0; i <= segments; i += 1) {
-    const angle = (i / segments) * Math.PI * 2;
+  for (let index = 0; index <= segments; index += 1) {
+    const angle = (index / segments) * Math.PI * 2;
     points.push(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
   }
   const geometry = new THREE.BufferGeometry().setFromPoints(points);
@@ -477,22 +656,44 @@ function createCoronaTexture() {
   return new THREE.CanvasTexture(canvas);
 }
 
+function createNasaBackdrop() {
+  const material = new THREE.SpriteMaterial({
+    color: 0xdbe7ff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: false
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.position.set(0, 0, -900);
+  sprite.scale.set(1550, 520, 1);
+  sprite.frustumCulled = false;
+  sprite.userData.baseOpacity = 0.24;
+  loadTexture(TEXTURE_SOURCES.milkyWayCenter, 'Great Observatories Milky Way center', (texture) => {
+    material.map = texture;
+    material.needsUpdate = true;
+  });
+  return sprite;
+}
+
 function createAsteroidBelt(innerRadius, outerRadius) {
-  const count = window.innerWidth < 760 ? 450 : 900;
+  const random = seededRandom(77291);
+  const count = compactMode ? 450 : 900;
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const color = new THREE.Color();
 
-  for (let i = 0; i < count; i += 1) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = mix(innerRadius, outerRadius, Math.random());
-    positions[i * 3] = Math.cos(angle) * radius;
-    positions[i * 3 + 1] = (Math.random() - 0.5) * 1.15;
-    positions[i * 3 + 2] = Math.sin(angle) * radius;
-    color.setHSL(0.09, 0.08, 0.42 + Math.random() * 0.25);
-    colors[i * 3] = color.r;
-    colors[i * 3 + 1] = color.g;
-    colors[i * 3 + 2] = color.b;
+  for (let index = 0; index < count; index += 1) {
+    const angle = random() * Math.PI * 2;
+    const radius = mix(innerRadius, outerRadius, random());
+    positions[index * 3] = Math.cos(angle) * radius;
+    positions[index * 3 + 1] = (random() - 0.5) * 1.15;
+    positions[index * 3 + 2] = Math.sin(angle) * radius;
+    color.setHSL(0.09, 0.08, 0.42 + random() * 0.25);
+    colors[index * 3] = color.r;
+    colors[index * 3 + 1] = color.g;
+    colors[index * 3 + 2] = color.b;
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -510,28 +711,47 @@ function createAsteroidBelt(innerRadius, outerRadius) {
   return belt;
 }
 
-function createPlanet({ name, radius, distance, color, speed, inclination = 0, axialTilt = 0, textureSources = null }) {
+function createPlanet({ name, radius, distance, speed, inclination = 0, axialTilt = 0, textureSources = null }) {
   const root = new THREE.Group();
   const pivot = new THREE.Group();
-  const geometry = new THREE.SphereGeometry(radius, 48, 32);
   const material = new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.74,
+    map: createPlanetTexture(name, textureAnisotropy, compactMode),
+    color: 0xffffff,
+    roughness: name === 'Earth' ? 0.66 : 0.82,
     metalness: 0,
-    emissive: color,
-    emissiveIntensity: 0.015
+    emissive: name === 'Neptune' ? 0x07132c : 0x080705,
+    emissiveIntensity: 0.08
   });
-  if (textureSources) {
-    applyTexture(material, textureSources, name);
-  }
-  const mesh = new THREE.Mesh(geometry, material);
+  if (textureSources) applyTexture(material, textureSources, name);
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 56, 36), material);
   mesh.position.x = distance;
   mesh.rotation.z = axialTilt;
   mesh.userData.name = name;
+  mesh.userData.baseOpacity = 1;
   pivot.rotation.z = inclination;
   pivot.add(mesh);
   root.add(createOrbit(distance), pivot);
   return { root, pivot, mesh, speed };
+}
+
+function addSatelliteSystem(body, satellites, color = 0xc7c4bb) {
+  const pivots = [];
+  satellites.forEach(({ radius, distance, speed, phase = 0 }) => {
+    const pivot = new THREE.Group();
+    const moon = new THREE.Mesh(
+      new THREE.SphereGeometry(radius, 20, 14),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.95 })
+    );
+    moon.position.x = distance;
+    pivot.rotation.y = phase;
+    const orbit = createOrbit(distance, 0x929aa4);
+    orbit.material.opacity = 0.09;
+    orbit.userData.baseOpacity = 0.09;
+    pivot.add(orbit, moon);
+    body.mesh.add(pivot);
+    pivots.push({ pivot, speed });
+  });
+  return pivots;
 }
 
 function createSolarSystem() {
@@ -539,9 +759,12 @@ function createSolarSystem() {
   root.rotation.x = -0.34;
   root.position.set(18, -1.5, -8);
 
-  const sunGeometry = new THREE.SphereGeometry(5.4, 64, 48);
-  const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffd39a });
-  const sun = new THREE.Mesh(sunGeometry, sunMaterial);
+  const sunMaterial = new THREE.MeshBasicMaterial({
+    map: createSunTexture(textureAnisotropy, compactMode),
+    color: 0xfff0ce
+  });
+  const sun = new THREE.Mesh(new THREE.SphereGeometry(5.4, 72, 52), sunMaterial);
+  sun.userData.baseOpacity = 1;
   const sunHalo = new THREE.Mesh(
     new THREE.SphereGeometry(7.4, 64, 48),
     new THREE.MeshBasicMaterial({
@@ -554,9 +777,8 @@ function createSolarSystem() {
   );
   sunHalo.userData.baseOpacity = 0.09;
 
-  const coronaTexture = createCoronaTexture();
   const corona = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: coronaTexture,
+    map: createCoronaTexture(),
     color: 0xffc274,
     transparent: true,
     opacity: 0.48,
@@ -569,14 +791,14 @@ function createSolarSystem() {
   root.add(sun, sunHalo, corona, solarLight);
 
   const bodies = [
-    createPlanet({ name: 'Mercury', radius: 0.42, distance: 10, color: 0xaaa19a, speed: 0.76, inclination: 0.02, axialTilt: 0.01 }),
-    createPlanet({ name: 'Venus', radius: 0.78, distance: 15, color: 0xd9b47a, speed: 0.48, inclination: -0.04, axialTilt: 0.05 }),
-    createPlanet({ name: 'Earth', radius: 0.88, distance: 21, color: 0x3f8dcc, speed: 0.34, inclination: 0.01, axialTilt: 0.41, textureSources: TEXTURE_SOURCES.earth }),
-    createPlanet({ name: 'Mars', radius: 0.58, distance: 28, color: 0xbb6547, speed: 0.25, inclination: 0.05, axialTilt: 0.44 }),
-    createPlanet({ name: 'Jupiter', radius: 2.1, distance: 39, color: 0xd3b28b, speed: 0.13, inclination: -0.02, axialTilt: 0.05 }),
-    createPlanet({ name: 'Saturn', radius: 1.78, distance: 52, color: 0xcab88c, speed: 0.09, inclination: 0.04, axialTilt: 0.47 }),
-    createPlanet({ name: 'Uranus', radius: 1.22, distance: 65, color: 0x91c9ce, speed: 0.062, inclination: -0.03, axialTilt: 1.71 }),
-    createPlanet({ name: 'Neptune', radius: 1.18, distance: 77, color: 0x4f74bb, speed: 0.048, inclination: 0.035, axialTilt: 0.49 })
+    createPlanet({ name: 'Mercury', radius: 0.42, distance: 10, speed: 0.76, inclination: 0.02, axialTilt: 0.01 }),
+    createPlanet({ name: 'Venus', radius: 0.78, distance: 15, speed: 0.48, inclination: -0.04, axialTilt: 0.05 }),
+    createPlanet({ name: 'Earth', radius: 0.88, distance: 21, speed: 0.34, inclination: 0.01, axialTilt: 0.41, textureSources: TEXTURE_SOURCES.earth }),
+    createPlanet({ name: 'Mars', radius: 0.58, distance: 28, speed: 0.25, inclination: 0.05, axialTilt: 0.44 }),
+    createPlanet({ name: 'Jupiter', radius: 2.1, distance: 39, speed: 0.13, inclination: -0.02, axialTilt: 0.05 }),
+    createPlanet({ name: 'Saturn', radius: 1.78, distance: 52, speed: 0.09, inclination: 0.04, axialTilt: 0.47 }),
+    createPlanet({ name: 'Uranus', radius: 1.22, distance: 65, speed: 0.062, inclination: -0.03, axialTilt: 1.71 }),
+    createPlanet({ name: 'Neptune', radius: 1.18, distance: 77, speed: 0.048, inclination: 0.035, axialTilt: 0.49 })
   ];
 
   bodies.forEach((body) => root.add(body.root));
@@ -589,41 +811,87 @@ function createSolarSystem() {
   moonPivot.add(createOrbit(1.85, 0xbfc7cf), moon);
   bodies[2].mesh.add(moonPivot);
 
-  const saturnRing = new THREE.Mesh(
-    new THREE.RingGeometry(2.22, 3.25, 96),
+  const saturnRingMaterial = createRingMaterial();
+  const saturnRing = new THREE.Mesh(new THREE.RingGeometry(2.22, 3.34, 160), saturnRingMaterial);
+  saturnRing.rotation.x = Math.PI / 2;
+  saturnRing.userData.baseOpacity = 0.78;
+  bodies[5].mesh.add(saturnRing);
+
+  const uranusRing = new THREE.Mesh(
+    new THREE.RingGeometry(1.53, 1.82, 128),
     new THREE.MeshBasicMaterial({
-      color: 0xd8cba5,
+      color: 0xaddce0,
       transparent: true,
-      opacity: 0.42,
+      opacity: 0.16,
       side: THREE.DoubleSide,
       depthWrite: false
     })
   );
-  saturnRing.rotation.x = Math.PI / 2.7;
-  saturnRing.userData.baseOpacity = 0.42;
-  bodies[5].mesh.add(saturnRing);
+  uranusRing.rotation.x = Math.PI / 2;
+  uranusRing.userData.baseOpacity = 0.16;
+  bodies[6].mesh.add(uranusRing);
+
+  const satellitePivots = [
+    ...addSatelliteSystem(bodies[4], [
+      { radius: 0.12, distance: 3.05, speed: 0.95, phase: 0.3 },
+      { radius: 0.1, distance: 3.85, speed: 0.72, phase: 1.7 },
+      { radius: 0.17, distance: 4.85, speed: 0.52, phase: 2.9 },
+      { radius: 0.15, distance: 6.15, speed: 0.38, phase: 4.2 }
+    ]),
+    ...addSatelliteSystem(bodies[5], [
+      { radius: 0.13, distance: 4.25, speed: 0.42, phase: 1.1 }
+    ], 0xc5b387)
+  ];
 
   const asteroidBelt = createAsteroidBelt(32.5, 35.5);
   root.add(asteroidBelt);
 
-  return { root, bodies, moonPivot, sunHalo, corona, asteroidBelt, solarLight };
+  return {
+    root,
+    bodies,
+    moonPivot,
+    sun,
+    sunHalo,
+    corona,
+    asteroidBelt,
+    solarLight,
+    satellitePivots
+  };
 }
 
 function computeCamera(scale) {
-  const tPlanet = smoothstep(0, 190, scale);
-  const tMoon = smoothstep(130, 360, scale);
-  const tSolar = smoothstep(300, MAX_SCALE, scale);
-  const distance = mix(mix(10.2, 78, tPlanet), 215, tSolar);
-  const fov = mix(mix(35, 42, tPlanet), 48, tSolar);
-  const orbitAngle = -0.28 + state.drag.x * 0.0035;
-  const elevation = 0.18 + state.drag.y * 0.0024;
+  const planetTransition = smoothstep(0, 190, scale);
+  const moonTransition = smoothstep(130, 360, scale);
+  const solarTransition = smoothstep(300, 800, scale);
+  const galaxyTransition = smoothstep(760, 1120, scale);
+  const localTransition = smoothstep(1380, MAX_SCALE, scale);
 
-  const centerX = mix(mix(0, 14, tMoon), 18, tSolar);
-  targetLookAt.set(centerX + state.drag.x * 0.024, state.drag.y * 0.018, -8 * tSolar);
+  let distance = mix(mix(10.2, 78, planetTransition), 215, solarTransition);
+  distance = mix(distance, 320, galaxyTransition);
+  distance = mix(distance, compactMode ? 1600 : 980, localTransition);
+
+  let fov = mix(mix(35, 42, planetTransition), 48, solarTransition);
+  fov = mix(fov, 50, galaxyTransition);
+  fov = mix(fov, 53, localTransition);
+
+  let orbitAngle = mix(-0.28, -0.58, galaxyTransition);
+  orbitAngle = mix(orbitAngle, -0.06, localTransition) + state.drag.x * 0.0035;
+  let elevation = mix(0.18, 1.0, galaxyTransition);
+  elevation = mix(elevation, 0.38, localTransition) + state.drag.y * 0.0012;
+
+  const solarCenter = new THREE.Vector3(mix(0, 18, moonTransition), 0, mix(0, -8, solarTransition));
+  const galaxyCenter = new THREE.Vector3(0, 0, -60);
+  const localCenter = new THREE.Vector3(35, 8, -78);
+  targetLookAt.copy(solarCenter).lerp(galaxyCenter, galaxyTransition).lerp(localCenter, localTransition);
+
+  const panAmount = mix(mix(0.024, 0.08, solarTransition), 0.42, galaxyTransition);
+  const localPanAmount = mix(panAmount, 1.05, localTransition);
+  targetLookAt.x += state.drag.x * localPanAmount;
+  targetLookAt.y += state.drag.y * localPanAmount * 0.62;
 
   targetPosition.set(
     targetLookAt.x + Math.sin(orbitAngle) * distance,
-    targetLookAt.y + Math.sin(elevation) * distance + mix(1.5, 16, tSolar),
+    targetLookAt.y + Math.sin(elevation) * distance + mix(1.5, 10, solarTransition),
     targetLookAt.z + Math.cos(orbitAngle) * distance
   );
 
@@ -631,36 +899,55 @@ function computeCamera(scale) {
   camera.updateProjectionMatrix();
 }
 
+function setGroupOpacity(group, opacity) {
+  group.traverse((object) => {
+    if (!object.material) return;
+    const nextOpacity = (object.userData.baseOpacity ?? 1) * opacity;
+    if (object.material.uniforms?.opacity) object.material.uniforms.opacity.value = nextOpacity;
+    if (typeof object.material.opacity === 'number') {
+      object.material.transparent = true;
+      object.material.opacity = nextOpacity;
+    }
+  });
+}
+
 function updateVisibility(scale) {
   const moonFade = smoothstep(135, 225, scale) * (1 - smoothstep(370, 520, scale));
   const mainPlanetFade = 1 - smoothstep(390, 540, scale);
-  const solarFade = smoothstep(330, 520, scale);
+  const solarFadeIn = smoothstep(330, 520, scale);
+  const solarFadeOut = 1 - smoothstep(850, 1110, scale);
+  const solarOpacity = solarFadeIn * solarFadeOut;
+  galaxyOpacity = smoothstep(790, 1080, scale);
+  localGroupOpacity = smoothstep(1320, 1600, scale);
+
   const planetScale = mix(1, 0.45, smoothstep(115, 360, scale));
   planetGroup.scale.setScalar(planetScale);
   planetGroup.visible = mainPlanetFade > 0.01;
-
-  earth.material.transparent = true;
-  earth.material.opacity = mainPlanetFade;
-  clouds.material.opacity = 0.55 * mainPlanetFade;
+  earth.material.uniforms.opacity.value = mainPlanetFade;
+  clouds.material.opacity = 0.54 * mainPlanetFade;
   atmosphere.material.uniforms.intensity.value = 0.92 * mainPlanetFade;
+  aurora.material.uniforms.intensity.value = 0.64 * mainPlanetFade;
 
   moonSystem.root.visible = moonFade > 0.01;
   moonSystem.moon.material.transparent = true;
   moonSystem.moon.material.opacity = moonFade;
   moonSystem.root.children[0].material.opacity = 0.16 * moonFade;
 
-  solarGroup.visible = solarFade > 0.001;
-  solarGroup.traverse((object) => {
-    if (!object.material) return;
-    if ('opacity' in object.material) {
-      object.material.transparent = true;
-      object.material.opacity = (object.userData.baseOpacity ?? 1) * solarFade;
-    }
-  });
-  solarSystem.solarLight.intensity = 245 * solarFade;
+  solarGroup.visible = solarOpacity > 0.001;
+  setGroupOpacity(solarGroup, solarOpacity);
+  solarSystem.solarLight.intensity = 245 * solarOpacity;
 
-  starField.material.opacity = mix(0.54, 0.88, smoothstep(50, MAX_SCALE, scale));
-  galaxyGlow.material.opacity = mix(0.08, 0.2, smoothstep(180, MAX_SCALE, scale));
+  const backdropIn = smoothstep(590, 790, scale);
+  const backdropOut = 1 - smoothstep(960, 1190, scale);
+  nasaBackdrop.material.opacity = nasaBackdrop.userData.baseOpacity * backdropIn * backdropOut;
+
+  cosmicGroup.visible = galaxyOpacity > 0.001;
+  starField.material.opacity = mix(0.54, 0.9, smoothstep(50, 900, scale));
+  galaxyGlow.material.opacity = mix(0.08, 0.19, smoothstep(180, 780, scale)) * (1 - galaxyOpacity * 0.72);
+  scene.fog.density = mix(0.0018, 0.00008, smoothstep(690, 1120, scale));
+  renderer.toneMappingExposure = mix(1.08, 0.91, smoothstep(820, 1280, scale));
+
+  locationMarker.classList.toggle('is-visible', scale >= 1050 && scale < 1480);
   scaleBar.style.transform = `scaleX(${clamp(scale / MAX_SCALE, 0, 1).toFixed(4)})`;
 }
 
@@ -681,9 +968,17 @@ function updateCopy(scale) {
   } else if (scale <= 380) {
     const lunarDistance = Math.round(mix(38, 384, (scale - 190) / 190));
     distanceValue.textContent = `${lunarDistance.toLocaleString('en-US')},000 km to Moon`;
+  } else if (scale <= 800) {
+    const astronomicalUnits = mix(0.08, 30, (scale - 380) / 420);
+    distanceValue.textContent = `${astronomicalUnits.toFixed(astronomicalUnits < 2 ? 2 : 1)} AU · COMPRESSED VIEW`;
+  } else if (scale <= 1050) {
+    const lightYears = mix(0.02, 4.24, (scale - 800) / 250);
+    distanceValue.textContent = `${lightYears.toFixed(2)} LIGHT-YEARS FROM THE SUN`;
+  } else if (scale <= 1450) {
+    distanceValue.textContent = 'YOU ARE HERE · ORION SPUR';
   } else {
-    const au = mix(0.08, 1, (scale - 380) / (MAX_SCALE - 380));
-    distanceValue.textContent = `${au.toFixed(2)} AU · COMPRESSED VIEW`;
+    const millionLightYears = mix(0.1, 10, (scale - 1450) / 350);
+    distanceValue.textContent = `${millionLightYears.toFixed(1)} MILLION LIGHT-YEARS`;
   }
 }
 
@@ -704,9 +999,12 @@ function animateBodies(delta) {
   earth.rotation.y += delta * 0.038;
   clouds.rotation.y += delta * 0.064;
   atmosphere.rotation.y += delta * 0.018;
+  aurora.rotation.y += delta * 0.021;
+  aurora.material.uniforms.time.value = clock.elapsedTime;
   moonSystem.pivot.rotation.y += delta * 0.055;
   moonSystem.moon.rotation.y += delta * 0.06;
   starField.rotation.y += delta * 0.003;
+  solarSystem.sun.rotation.y += delta * 0.045;
   solarSystem.sunHalo.rotation.y += delta * 0.1;
   solarSystem.asteroidBelt.rotation.y += delta * 0.008;
 
@@ -718,6 +1016,10 @@ function animateBodies(delta) {
     body.mesh.rotation.y += delta * 0.2;
   });
   solarSystem.moonPivot.rotation.y += delta * 0.82;
+  solarSystem.satellitePivots.forEach(({ pivot, speed }) => {
+    pivot.rotation.y += delta * speed;
+  });
+  cosmicEnvironment.update(delta, galaxyOpacity, localGroupOpacity);
 }
 
 function render() {
@@ -746,7 +1048,7 @@ function markInteracted() {
 window.addEventListener('wheel', (event) => {
   event.preventDefault();
   markInteracted();
-  state.targetScale = clamp(state.targetScale + event.deltaY * 0.42, 0, MAX_SCALE);
+  state.targetScale = clamp(state.targetScale + event.deltaY * 0.68, 0, MAX_SCALE);
 }, { passive: false });
 
 renderer.domElement.addEventListener('pointerdown', (event) => {
@@ -778,7 +1080,7 @@ renderer.domElement.addEventListener('pointermove', (event) => {
     const pinchDistance = first.distanceTo(second);
     if (state.previousPinchDistance > 0) {
       state.targetScale = clamp(
-        state.targetScale - (pinchDistance - state.previousPinchDistance) * 1.15,
+        state.targetScale - (pinchDistance - state.previousPinchDistance) * 1.9,
         0,
         MAX_SCALE
       );
@@ -819,10 +1121,10 @@ renderer.domElement.addEventListener('pointercancel', endPointer);
 
 window.addEventListener('keydown', (event) => {
   const scaleSteps = {
-    ArrowDown: 70,
-    PageDown: 120,
-    ArrowUp: -70,
-    PageUp: -120
+    ArrowDown: 120,
+    PageDown: 240,
+    ArrowUp: -120,
+    PageUp: -240
   };
 
   if (event.key in scaleSteps) {
@@ -842,5 +1144,22 @@ window.addEventListener('resize', () => {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+window.__scaleBeyond = {
+  maxScale: MAX_SCALE,
+  setScale(value) {
+    const nextScale = clamp(Number(value) || 0, 0, MAX_SCALE);
+    state.scale = nextScale;
+    state.targetScale = nextScale;
+  },
+  getState() {
+    return {
+      scale: state.scale,
+      targetScale: state.targetScale,
+      layer: layerName.textContent,
+      assets: assetStatus.textContent
+    };
+  }
+};
 
 render();

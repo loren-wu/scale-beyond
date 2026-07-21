@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="《尺度之外》MVP：通过滚轮缩放和拖拽视角探索从地球到太阳系的真实 3D 宇宙尺度体验。" />
-  <title>尺度之外 | From Earth to the Multiverse</title>
+  <meta name="description" content="《尺度之外》：从地球昼夜、月球与太阳系，连续缩放至银河系和本星系群的沉浸式 3D 宇宙尺度体验。" />
+  <title>尺度之外 | Earth to the Local Group</title>
   <link rel="icon" href="data:," />
   <link rel="preload" href="assets/nasa/earth-blue-marble-2048.jpg" as="image" />
-  <link rel="stylesheet" href="style.css?v=scale-mvp2" />
+  <link rel="preload" href="assets/nasa/earth-black-marble-3600.jpg" as="image" />
+  <link rel="stylesheet" href="style.css?v=scale-cosmic3" />
   <script type="importmap">
     {
       "imports": {
@@ -15,7 +16,7 @@
       }
     }
   </script>
-  <script type="module" src="main.js?v=scale-mvp2"></script>
+  <script type="module" src="main.js?v=scale-cosmic3"></script>
 </head>
 <body>
   <main class="experience" aria-label="尺度之外 3D 宇宙尺度探索">
@@ -44,12 +45,19 @@
 
     <p id="assetStatus" class="asset-status" aria-live="polite">NASA IMAGERY · LOADING</p>
 
+    <p id="locationMarker" class="location-marker" aria-hidden="true">
+      <span>YOU ARE HERE</span>
+      ORION SPUR · 27,000 LY FROM CENTER
+    </p>
+
     <div class="scale-meter" aria-hidden="true">
       <span id="scaleBar"></span>
       <i style="--position: 0%">地表</i>
-      <i style="--position: 24%">地球</i>
-      <i style="--position: 48%">地月</i>
-      <i style="--position: 100%">太阳系</i>
+      <i style="--position: 9%">地球</i>
+      <i style="--position: 21%">地月</i>
+      <i style="--position: 44%">太阳系</i>
+      <i style="--position: 69%">银河系</i>
+      <i style="--position: 100%">本星系群</i>
     </div>
   </main>
 </body>

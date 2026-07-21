@@ -1,12 +1,19 @@
 import * as THREE from 'three';
 import { createPlanetTexture, createRingMaterial, createSunTexture } from './src/planet-textures.js';
 import { createCosmicEnvironment } from './src/galaxy.js';
+import { createSkyBand } from './src/sky-band.js';
 
 const container = document.getElementById('scene');
+const experience = document.querySelector('.experience');
+const scaleReadoutPanel = document.querySelector('.scale-readout');
+const captionPanel = document.querySelector('.caption');
 const layerName = document.getElementById('layerName');
 const scaleUnit = document.getElementById('scaleUnit');
 const captionZh = document.getElementById('captionZh');
 const captionEn = document.getElementById('captionEn');
+const stageFacts = [...document.querySelectorAll('#stageFacts span')];
+const stageStatus = document.getElementById('stageStatus');
+const meterTicks = [...document.querySelectorAll('.meter-tick')];
 const hint = document.getElementById('hint');
 const scaleBar = document.getElementById('scaleBar');
 const distanceValue = document.getElementById('distanceValue');
@@ -16,6 +23,8 @@ const locationMarker = document.getElementById('locationMarker');
 const EARTH_RADIUS = 8;
 const MAX_SCALE = 1800;
 const compactMode = window.innerWidth < 760;
+const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+let reduceMotion = motionQuery.matches;
 
 const TEXTURE_SOURCES = {
   earth: [
@@ -37,6 +46,9 @@ const TEXTURE_SOURCES = {
   milkyWayCenter: [
     'assets/nasa/milky-way-center-multiwavelength.jpg',
     'https://images-assets.nasa.gov/image/PIA12348/PIA12348~large.jpg'
+  ],
+  milkyWayPanorama: [
+    'assets/nasa/milky-way-glimpse360-4096.webp'
   ]
 };
 
@@ -61,15 +73,22 @@ const state = {
 };
 
 const activePointers = new Map();
+let milkyWaySkyBand = null;
+
+motionQuery.addEventListener('change', (event) => {
+  reduceMotion = event.matches;
+  if (reduceMotion) state.dragVelocity.set(0, 0);
+  if (milkyWaySkyBand) milkyWaySkyBand.setMotionEnabled(!reduceMotion);
+});
 
 if (window.matchMedia('(pointer: coarse)').matches) {
   const [zoomHint, dragHint] = hint.querySelectorAll('span');
   zoomHint.textContent = '双指缩放';
-  dragHint.textContent = '单指拖拽视角';
+  dragHint.textContent = '单指拖拽观察';
 }
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x02040a, 0.0018);
+scene.fog = new THREE.FogExp2(0x030713, 0.00135);
 
 const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.05, 8000);
 camera.position.set(0, 2, 16);
@@ -81,10 +100,10 @@ const renderer = new THREE.WebGLRenderer({
 });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x02040a, 1);
+renderer.setClearColor(0x030713, 1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.08;
+renderer.toneMappingExposure = 1.12;
 container.appendChild(renderer.domElement);
 
 const clock = new THREE.Clock();
@@ -98,7 +117,7 @@ const sunDirection = new THREE.Vector3(-18, 4, 4).normalize();
 const sunLight = new THREE.DirectionalLight(0xffffff, 4.6);
 sunLight.position.copy(sunDirection).multiplyScalar(42);
 scene.add(sunLight);
-scene.add(new THREE.AmbientLight(0x9fb9d4, 0.075));
+scene.add(new THREE.AmbientLight(0xa9c5e8, 0.11));
 
 const textureAnisotropy = renderer.capabilities.getMaxAnisotropy();
 const textureLoader = new THREE.TextureLoader();
@@ -121,6 +140,16 @@ solarGroup.add(solarSystem.root);
 const cosmicEnvironment = createCosmicEnvironment(compactMode);
 cosmicGroup.add(cosmicEnvironment.root);
 
+milkyWaySkyBand = createSkyBand({
+  compact: compactMode,
+  anisotropy: Math.min(textureAnisotropy, 4),
+  onError: () => {
+    assetStatus.textContent = 'NASA DATA · MILKY WAY SKY ART UNAVAILABLE';
+  }
+});
+milkyWaySkyBand.setMotionEnabled(!reduceMotion);
+scene.add(milkyWaySkyBand.root);
+
 const nasaBackdrop = createNasaBackdrop();
 camera.add(nasaBackdrop);
 
@@ -135,54 +164,63 @@ let localGroupOpacity = 0;
 const copy = [
   {
     max: 70,
-    layer: 'Planet Surface',
-    unit: 'Low Earth orbit',
-    zh: '你所看见的，只是现实中的一个尺度。',
-    en: 'What you see is only one scale of reality.'
+    layer: '01 · NEAR-EARTH ORBIT',
+    unit: '120–2,000 KM ABOVE EARTH',
+    zh: '在离地数百公里的轨道上，云层、海洋与城市灯光仍覆盖整个视野；大气只是一圈极薄的蓝色边缘。',
+    en: 'From near-Earth orbit, the atmosphere is only a thin blue edge around our world.',
+    facts: ['KÁRMÁN LINE · 100 KM', 'LOW ORBIT · ≈90 MIN', 'BLUE EDGE · <1% RADIUS']
   },
   {
     max: 190,
-    layer: 'Planet View',
-    unit: '12,742 km',
-    zh: '白昼、夜灯与薄薄的大气，共同包裹着我们熟悉的一切。',
-    en: 'Daylight, city lights and a fragile atmosphere hold everything familiar.'
+    layer: '02 · EARTH IN VIEW',
+    unit: 'DIAMETER · 12,742 KM',
+    zh: '昼面反射太阳光，夜面显露人类灯火，昼夜交界线沿着自转缓慢移动。',
+    en: 'Sunlight, city lights and the moving terminator reveal a living planet.',
+    facts: ['OCEAN · 71%', 'ROTATION · 23 H 56 M', 'ONE HOME · 12,742 KM']
   },
   {
     max: 380,
-    layer: 'Earth–Moon System',
-    unit: '384,400 km',
-    zh: '月球并不遥远。直到地球缩小，距离才显露出来。',
-    en: 'The Moon feels close, until Earth becomes small enough for distance to appear.'
+    layer: '03 · EARTH–MOON SYSTEM',
+    unit: 'MEAN DISTANCE · 384,400 KM',
+    zh: '地月平均相距 384,400 公里——这段空隙足以并排放下约 30 个地球。',
+    en: 'The gap between Earth and Moon is wide enough for about thirty Earths.',
+    facts: ['MEAN DISTANCE · 384,400 KM', 'ORBIT · 27.3 DAYS', 'GAP · ≈30 EARTHS']
   },
   {
     max: 800,
-    layer: 'Solar System',
-    unit: '30 AU · Neptune orbit',
-    zh: '八颗行星沿着同一片古老的盘面，围绕一颗普通恒星运行。',
-    en: 'Eight planets trace an ancient disk around one ordinary star.'
+    layer: '04 · SOLAR SYSTEM',
+    unit: 'NEPTUNE ORBIT · 30 AU',
+    zh: '八颗行星共享近乎平坦的轨道盘。更远处，银河盘中无数恒星的光汇成一道横贯天空的星带。',
+    en: 'Eight planets orbit the Sun beneath the luminous band of the Milky Way.',
+    facts: ['8 PLANETS', '5 DWARF PLANETS', '30 AU TO NEPTUNE']
   },
   {
     max: 1050,
-    layer: 'Stellar Neighborhood',
-    unit: '4.24 light-years',
-    zh: '越过日球层，太阳也只是一颗沉入银河背景的星。',
-    en: 'Beyond the heliosphere, the Sun becomes one star in the Milky Way.'
+    layer: '05 · STELLAR NEIGHBORHOOD',
+    unit: 'NEAREST STAR · 4.24 LIGHT-YEARS',
+    zh: '越过日球层，太阳也只是一颗普通恒星；银河的光带开始显露我们所在星系的轮廓。',
+    en: 'Beyond the heliosphere, the Sun becomes one star inside the galactic disk.',
+    facts: ['HELIOPAUSE · ≈120 AU', 'PROXIMA · 4.24 LY', 'LOCAL BUBBLE · ≈1,000 LY']
   },
   {
     max: 1450,
-    layer: 'Milky Way',
-    unit: '≈ 100,000 light-years',
-    zh: '我们位于猎户臂的一段支脉，距银河中心约二万七千光年。',
-    en: 'We live on the Orion Spur, about 27,000 light-years from the galactic center.'
+    layer: '06 · MILKY WAY',
+    unit: 'DIAMETER · ≈100,000 LIGHT-YEARS',
+    zh: '银河系是一座棒旋星系。太阳位于猎户支臂，距银河中心约 26,000 光年。',
+    en: 'The Sun sits on the Orion Spur, far from the Milky Way’s central bar.',
+    facts: ['4 PRIMARY ARMS', '≈100–400 BILLION STARS', '26,000 LY FROM CENTER']
   },
   {
     max: MAX_SCALE + 1,
-    layer: 'Local Group',
-    unit: '≈ 10 million light-years',
-    zh: '银河系不是孤岛。仙女座、三角座与数十个矮星系共享同一片引力海洋。',
-    en: 'The Milky Way is not alone. A family of galaxies shares the same gravitational sea.'
+    layer: '07 · LOCAL GROUP',
+    unit: 'SPAN · ≈10 MILLION LIGHT-YEARS',
+    zh: '银河系、仙女座、三角座和数十个矮星系共同组成了本星系群，引力把它们联结成一个家族。',
+    en: 'The Milky Way is one member of a gravitational family of galaxies.',
+    facts: ['50+ GALAXIES', 'M31 · 2.5 MLY', '≈10 MLY WIDE']
   }
 ];
+
+let activeStageIndex = -1;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -236,11 +274,11 @@ function refreshAssetStatus() {
 
   const localOnly = textureState.loadedLocal > 0 && textureState.loadedRemote === 0 && textureState.fallback === 0;
   if (localOnly) {
-    assetStatus.textContent = 'NASA IMAGERY · LOCAL';
+    assetStatus.textContent = 'NASA DATA · ORIGINAL VISIBLE-SKY ART';
   } else if (textureState.fallback > 0) {
-    assetStatus.textContent = 'NASA IMAGERY · LOCAL + PROCEDURAL';
+    assetStatus.textContent = 'NASA DATA PARTIAL · ORIGINAL VISIBLE-SKY ART';
   } else {
-    assetStatus.textContent = 'NASA IMAGERY · LOCAL + REMOTE';
+    assetStatus.textContent = 'NASA DATA · ORIGINAL VISIBLE-SKY ART';
   }
   assetStatus.classList.add('is-ready');
 }
@@ -580,7 +618,8 @@ function createGalaxyGlow() {
     opacity: 0.18,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
-    depthTest: false
+    depthTest: false,
+    fog: false
   });
   const sprite = new THREE.Sprite(material);
   sprite.position.set(-280, 110, -980);
@@ -663,14 +702,16 @@ function createNasaBackdrop() {
     opacity: 0,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
-    depthTest: false
+    depthTest: false,
+    fog: false
   });
   const sprite = new THREE.Sprite(material);
   sprite.position.set(0, 0, -900);
-  sprite.scale.set(1550, 520, 1);
+  sprite.scale.set(2200, 118, 1);
   sprite.frustumCulled = false;
-  sprite.userData.baseOpacity = 0.24;
-  loadTexture(TEXTURE_SOURCES.milkyWayCenter, 'Great Observatories Milky Way center', (texture) => {
+  sprite.renderOrder = -9;
+  sprite.userData.baseOpacity = 0.31;
+  loadTexture(TEXTURE_SOURCES.milkyWayPanorama, 'Spitzer GLIMPSE 360 Milky Way panorama', (texture) => {
     material.map = texture;
     material.needsUpdate = true;
   });
@@ -709,6 +750,150 @@ function createAsteroidBelt(innerRadius, outerRadius) {
   const belt = new THREE.Points(geometry, material);
   belt.userData.baseOpacity = 0.38;
   return belt;
+}
+
+function createKuiperBelt() {
+  const random = seededRandom(940231);
+  const count = compactMode ? 820 : 1800;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const color = new THREE.Color();
+
+  for (let index = 0; index < count; index += 1) {
+    const angle = random() * Math.PI * 2;
+    const radius = mix(84, 124, Math.pow(random(), 0.86));
+    const verticalSpread = (random() + random() + random() - 1.5) * mix(2.2, 7.2, (radius - 84) / 40);
+    positions[index * 3] = Math.cos(angle) * radius;
+    positions[index * 3 + 1] = verticalSpread;
+    positions[index * 3 + 2] = Math.sin(angle) * radius;
+
+    color.setHSL(0.56 + random() * 0.1, 0.12 + random() * 0.22, 0.48 + random() * 0.3);
+    colors[index * 3] = color.r;
+    colors[index * 3 + 1] = color.g;
+    colors[index * 3 + 2] = color.b;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const belt = new THREE.Points(geometry, new THREE.PointsMaterial({
+    size: compactMode ? 0.2 : 0.16,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.27,
+    depthWrite: false
+  }));
+  belt.userData.baseOpacity = 0.27;
+  return belt;
+}
+
+function createZodiacalDust() {
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      opacity: { value: 0.15 }
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float opacity;
+      varying vec2 vUv;
+
+      void main() {
+        vec2 point = (vUv - 0.5) * 2.0;
+        float radius = length(point);
+        if (radius > 1.0) discard;
+        float innerMask = smoothstep(0.035, 0.075, radius);
+        float outerMask = 1.0 - smoothstep(0.72, 1.0, radius);
+        float radialGlow = exp(-radius * 3.6);
+        float grain = 0.93 + 0.07 * sin(point.x * 91.0 + point.y * 57.0);
+        vec3 color = mix(vec3(1.0, 0.62, 0.28), vec3(0.32, 0.48, 0.72), radius);
+        float alpha = innerMask * outerMask * radialGlow * grain * opacity;
+        gl_FragColor = vec4(color, alpha);
+      }
+    `
+  });
+  const dust = new THREE.Mesh(new THREE.CircleGeometry(116, 192), material);
+  dust.rotation.x = -Math.PI / 2;
+  dust.position.y = -0.08;
+  dust.renderOrder = -3;
+  dust.userData.baseOpacity = 0.15;
+  return dust;
+}
+
+function createHeliosphere() {
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      opacity: { value: 0.052 }
+    },
+    vertexShader: `
+      varying vec3 vViewNormal;
+      varying vec3 vViewPosition;
+      void main() {
+        vViewNormal = normalize(normalMatrix * normal);
+        vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+        vViewPosition = viewPosition.xyz;
+        gl_Position = projectionMatrix * viewPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform float opacity;
+      varying vec3 vViewNormal;
+      varying vec3 vViewPosition;
+
+      void main() {
+        vec3 viewDirection = normalize(-vViewPosition);
+        float rim = pow(1.0 - abs(dot(normalize(vViewNormal), viewDirection)), 2.7);
+        float striation = 0.9 + 0.1 * sin(vViewPosition.y * 0.09 + vViewPosition.z * 0.025);
+        vec3 color = mix(vec3(0.18, 0.46, 0.88), vec3(0.48, 0.78, 1.0), rim);
+        gl_FragColor = vec4(color, (0.012 + rim * 0.988) * striation * opacity);
+      }
+    `
+  });
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(1, 52, 34), material);
+  shell.position.x = -7;
+  shell.scale.set(132, 34, 102);
+  shell.rotation.z = -0.035;
+  shell.renderOrder = -2;
+  shell.userData.baseOpacity = 0.052;
+  return shell;
+}
+
+function createDwarfPlanet({ name, radius, distance, speed, inclination, color }) {
+  const root = new THREE.Group();
+  const pivot = new THREE.Group();
+  pivot.rotation.z = inclination;
+  const orbit = createOrbit(distance, 0x71839a);
+  orbit.material.opacity = 0.075;
+  orbit.userData.baseOpacity = 0.075;
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 22, 14),
+    new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.92,
+      emissive: new THREE.Color(color).multiplyScalar(0.12),
+      emissiveIntensity: 0.18
+    })
+  );
+  mesh.name = name;
+  mesh.position.x = distance;
+  mesh.userData.baseOpacity = 1;
+  pivot.add(mesh);
+  root.add(orbit, pivot);
+  return { root, pivot, mesh, speed };
 }
 
 function createPlanet({ name, radius, distance, speed, inclination = 0, axialTilt = 0, textureSources = null }) {
@@ -759,6 +944,10 @@ function createSolarSystem() {
   root.rotation.x = -0.34;
   root.position.set(18, -1.5, -8);
 
+  const zodiacalDust = createZodiacalDust();
+  const heliosphere = createHeliosphere();
+  root.add(zodiacalDust, heliosphere);
+
   const sunMaterial = new THREE.MeshBasicMaterial({
     map: createSunTexture(textureAnisotropy, compactMode),
     color: 0xfff0ce
@@ -803,6 +992,15 @@ function createSolarSystem() {
 
   bodies.forEach((body) => root.add(body.root));
 
+  const dwarfPlanets = [
+    createDwarfPlanet({ name: 'Ceres', radius: 0.16, distance: 34.1, speed: 0.2, inclination: 0.09, color: 0xa7a49d }),
+    createDwarfPlanet({ name: 'Pluto', radius: 0.19, distance: 88, speed: 0.041, inclination: 0.3, color: 0xc8a27f }),
+    createDwarfPlanet({ name: 'Haumea', radius: 0.14, distance: 99, speed: 0.034, inclination: 0.49, color: 0xc7d6db }),
+    createDwarfPlanet({ name: 'Makemake', radius: 0.17, distance: 110, speed: 0.03, inclination: 0.51, color: 0xb77f61 }),
+    createDwarfPlanet({ name: 'Eris', radius: 0.18, distance: 121, speed: 0.024, inclination: 0.77, color: 0xd8d5ca })
+  ];
+  dwarfPlanets.forEach((body) => root.add(body.root));
+
   const moonPivot = new THREE.Group();
   const moonMaterial = new THREE.MeshStandardMaterial({ color: 0xb9b8b1, roughness: 0.9 });
   applyTexture(moonMaterial, TEXTURE_SOURCES.moon, 'LROC Moon');
@@ -844,7 +1042,8 @@ function createSolarSystem() {
   ];
 
   const asteroidBelt = createAsteroidBelt(32.5, 35.5);
-  root.add(asteroidBelt);
+  const kuiperBelt = createKuiperBelt();
+  root.add(asteroidBelt, kuiperBelt);
 
   return {
     root,
@@ -854,8 +1053,12 @@ function createSolarSystem() {
     sunHalo,
     corona,
     asteroidBelt,
+    kuiperBelt,
+    zodiacalDust,
+    heliosphere,
     solarLight,
-    satellitePivots
+    satellitePivots,
+    dwarfPlanets
   };
 }
 
@@ -895,7 +1098,8 @@ function computeCamera(scale) {
     targetLookAt.z + Math.cos(orbitAngle) * distance
   );
 
-  camera.fov += (fov - camera.fov) * 0.055;
+  if (reduceMotion) camera.fov = fov;
+  else camera.fov += (fov - camera.fov) * 0.055;
   camera.updateProjectionMatrix();
 }
 
@@ -937,52 +1141,87 @@ function updateVisibility(scale) {
   setGroupOpacity(solarGroup, solarOpacity);
   solarSystem.solarLight.intensity = 245 * solarOpacity;
 
-  const backdropIn = smoothstep(590, 790, scale);
-  const backdropOut = 1 - smoothstep(960, 1190, scale);
+  const backdropIn = smoothstep(700, 900, scale);
+  const backdropOut = 1 - smoothstep(980, 1190, scale);
   nasaBackdrop.material.opacity = nasaBackdrop.userData.baseOpacity * backdropIn * backdropOut;
 
   cosmicGroup.visible = galaxyOpacity > 0.001;
-  starField.material.opacity = mix(0.54, 0.9, smoothstep(50, 900, scale));
-  galaxyGlow.material.opacity = mix(0.08, 0.19, smoothstep(180, 780, scale)) * (1 - galaxyOpacity * 0.72);
-  scene.fog.density = mix(0.0018, 0.00008, smoothstep(690, 1120, scale));
-  renderer.toneMappingExposure = mix(1.08, 0.91, smoothstep(820, 1280, scale));
+  starField.material.opacity = mix(0.62, 0.93, smoothstep(170, 760, scale));
+  galaxyGlow.material.opacity = mix(0.1, 0.17, smoothstep(180, 720, scale)) * (1 - galaxyOpacity * 0.76);
+  scene.fog.density = mix(0.00135, 0.0001, smoothstep(280, 920, scale));
+  renderer.toneMappingExposure = mix(1.12, 0.94, smoothstep(880, 1280, scale));
 
   locationMarker.classList.toggle('is-visible', scale >= 1050 && scale < 1480);
   scaleBar.style.transform = `scaleX(${clamp(scale / MAX_SCALE, 0, 1).toFixed(4)})`;
 }
 
 function updateCopy(scale) {
-  const active = copy.find((item) => scale <= item.max) || copy[copy.length - 1];
-  if (layerName.textContent !== active.layer) {
+  const nextStageIndex = copy.findIndex((item) => scale <= item.max);
+  const resolvedStageIndex = nextStageIndex === -1 ? copy.length - 1 : nextStageIndex;
+  const active = copy[resolvedStageIndex];
+
+  if (resolvedStageIndex !== activeStageIndex) {
+    activeStageIndex = resolvedStageIndex;
     layerName.textContent = active.layer;
     scaleUnit.textContent = active.unit;
     captionZh.textContent = active.zh;
     captionEn.textContent = active.en;
+    active.facts.forEach((fact, index) => {
+      if (stageFacts[index]) stageFacts[index].textContent = fact;
+    });
+    experience.dataset.stageIndex = String(activeStageIndex);
+    meterTicks.forEach((tick, index) => {
+      tick.classList.toggle('is-active', index === activeStageIndex);
+      tick.classList.toggle('is-passed', index < activeStageIndex);
+    });
+    stageStatus.textContent = `${active.layer}。${active.unit}。${active.zh}`;
+
+    if (!reduceMotion) {
+      [scaleReadoutPanel, captionPanel].forEach((panel, panelIndex) => {
+        panel.getAnimations().forEach((animation) => animation.cancel());
+        panel.animate(
+          [
+            { opacity: 0.48, transform: `translateY(${panelIndex === 0 ? -3 : 5}px)` },
+            { opacity: 1, transform: 'translateY(0)' }
+          ],
+          { duration: 380, easing: 'cubic-bezier(.2,.72,.2,1)' }
+        );
+      });
+    }
   }
 
   if (scale <= 70) {
     const altitude = Math.round(mix(120, 2000, scale / 70));
-    distanceValue.textContent = `${altitude.toLocaleString('en-US')} km above Earth`;
+    distanceValue.textContent = `距地表 · ${altitude.toLocaleString('zh-CN')} KM`;
   } else if (scale <= 190) {
-    distanceValue.textContent = 'EARTH DIAMETER · 12,742 KM';
+    distanceValue.textContent = '地球直径 · 12,742 KM';
   } else if (scale <= 380) {
     const lunarDistance = Math.round(mix(38, 384, (scale - 190) / 190));
-    distanceValue.textContent = `${lunarDistance.toLocaleString('en-US')},000 km to Moon`;
+    distanceValue.textContent = `距月球 · ${lunarDistance.toLocaleString('zh-CN')},000 KM`;
   } else if (scale <= 800) {
     const astronomicalUnits = mix(0.08, 30, (scale - 380) / 420);
-    distanceValue.textContent = `${astronomicalUnits.toFixed(astronomicalUnits < 2 ? 2 : 1)} AU · COMPRESSED VIEW`;
+    distanceValue.textContent = `距太阳 · ${astronomicalUnits.toFixed(astronomicalUnits < 2 ? 2 : 1)} AU · 轨道压缩展示`;
   } else if (scale <= 1050) {
     const lightYears = mix(0.02, 4.24, (scale - 800) / 250);
-    distanceValue.textContent = `${lightYears.toFixed(2)} LIGHT-YEARS FROM THE SUN`;
+    distanceValue.textContent = `距太阳 · ${lightYears.toFixed(2)} 光年`;
   } else if (scale <= 1450) {
-    distanceValue.textContent = 'YOU ARE HERE · ORION SPUR';
+    distanceValue.textContent = '当前位置 · 猎户支臂';
   } else {
     const millionLightYears = mix(0.1, 10, (scale - 1450) / 350);
-    distanceValue.textContent = `${millionLightYears.toFixed(1)} MILLION LIGHT-YEARS`;
+    distanceValue.textContent = `观察尺度 · ${millionLightYears.toFixed(1)} 百万光年`;
   }
 }
 
 function updateInteractions() {
+  if (reduceMotion) {
+    state.scale = state.targetScale;
+    state.dragVelocity.set(0, 0);
+    state.dragTarget.x = clamp(state.dragTarget.x, -220, 220);
+    state.dragTarget.y = clamp(state.dragTarget.y, -160, 160);
+    state.drag.copy(state.dragTarget);
+    return;
+  }
+
   state.scale += (state.targetScale - state.scale) * 0.075;
 
   if (!state.isDragging) {
@@ -996,6 +1235,15 @@ function updateInteractions() {
 }
 
 function animateBodies(delta) {
+  milkyWaySkyBand.update(delta, state.scale);
+
+  if (reduceMotion) {
+    aurora.material.uniforms.time.value = 0;
+    solarSystem.corona.scale.set(25, 25, 1);
+    cosmicEnvironment.update(0, galaxyOpacity, localGroupOpacity, false);
+    return;
+  }
+
   earth.rotation.y += delta * 0.038;
   clouds.rotation.y += delta * 0.064;
   atmosphere.rotation.y += delta * 0.018;
@@ -1007,6 +1255,7 @@ function animateBodies(delta) {
   solarSystem.sun.rotation.y += delta * 0.045;
   solarSystem.sunHalo.rotation.y += delta * 0.1;
   solarSystem.asteroidBelt.rotation.y += delta * 0.008;
+  solarSystem.kuiperBelt.rotation.y -= delta * 0.0018;
 
   const coronaSize = 25 + Math.sin(clock.elapsedTime * 0.75) * 0.7;
   solarSystem.corona.scale.set(coronaSize, coronaSize, 1);
@@ -1019,7 +1268,11 @@ function animateBodies(delta) {
   solarSystem.satellitePivots.forEach(({ pivot, speed }) => {
     pivot.rotation.y += delta * speed;
   });
-  cosmicEnvironment.update(delta, galaxyOpacity, localGroupOpacity);
+  solarSystem.dwarfPlanets.forEach((body) => {
+    body.pivot.rotation.y += delta * body.speed;
+    body.mesh.rotation.y += delta * 0.12;
+  });
+  cosmicEnvironment.update(delta, galaxyOpacity, localGroupOpacity, true);
 }
 
 function render() {
@@ -1030,8 +1283,13 @@ function render() {
   updateCopy(state.scale);
   animateBodies(delta);
 
-  currentPosition.lerp(targetPosition, 0.055);
-  currentLookAt.lerp(targetLookAt, 0.065);
+  if (reduceMotion) {
+    currentPosition.copy(targetPosition);
+    currentLookAt.copy(targetLookAt);
+  } else {
+    currentPosition.lerp(targetPosition, 0.055);
+    currentLookAt.lerp(targetLookAt, 0.065);
+  }
   camera.position.copy(currentPosition);
   camera.lookAt(currentLookAt);
 
@@ -1093,7 +1351,8 @@ renderer.domElement.addEventListener('pointermove', (event) => {
   state.pointer.set(event.clientX, event.clientY);
   const movement = state.pointer.clone().sub(state.previousPointer);
   state.dragTarget.add(movement);
-  state.dragVelocity.copy(movement).multiplyScalar(0.42);
+  if (reduceMotion) state.dragVelocity.set(0, 0);
+  else state.dragVelocity.copy(movement).multiplyScalar(0.42);
   state.previousPointer.copy(state.pointer);
 });
 
@@ -1143,6 +1402,7 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
+  milkyWaySkyBand.resize(window.innerWidth, window.innerHeight);
 });
 
 window.__scaleBeyond = {
@@ -1157,7 +1417,9 @@ window.__scaleBeyond = {
       scale: state.scale,
       targetScale: state.targetScale,
       layer: layerName.textContent,
-      assets: assetStatus.textContent
+      assets: assetStatus.textContent,
+      skyBandLoaded: milkyWaySkyBand.loaded,
+      reducedMotion: reduceMotion
     };
   }
 };

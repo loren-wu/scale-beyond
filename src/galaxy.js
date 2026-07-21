@@ -106,19 +106,23 @@ function createLuminousDisk(radius, arms, twist, coreColor, armColor) {
         if (radius > 1.0) discard;
 
         float angle = atan(point.y, point.x);
-        float spiral = 0.5 + 0.5 * cos(angle * arms - radius * twist);
+        float spiralPhase = angle * arms - radius * twist;
+        float spiral = 0.5 + 0.5 * cos(spiralPhase);
         float armBand = pow(spiral, 7.0) * smoothstep(0.08, 0.3, radius);
+        float armFilament = pow(0.5 + 0.5 * cos(spiralPhase * 2.0 + radius * 8.0), 11.0);
         float feather = 1.0 - smoothstep(0.66, 1.0, radius);
         float disk = exp(-radius * 2.9) * 0.24;
         float core = exp(-radius * 10.0) * 1.55;
-        float dustLane = 0.62 + 0.38 * smoothstep(0.12, 0.7, spiral);
-        float alpha = (disk + armBand * 0.26 + core) * feather * dustLane * opacity;
+        float dustSpiral = pow(0.5 + 0.5 * cos(spiralPhase + 1.18), 13.0);
+        float dustLane = 1.0 - dustSpiral * smoothstep(0.12, 0.48, radius) * 0.62;
+        float alpha = (disk + armBand * 0.27 + armFilament * 0.035 + core) * feather * dustLane * opacity;
         vec3 color = mix(coreColor, armColor, smoothstep(0.08, 0.68, radius));
+        color += armColor * armFilament * 0.1;
         gl_FragColor = vec4(color, alpha);
       }
     `
   });
-  const disk = tagMaterial(new THREE.Mesh(new THREE.CircleGeometry(radius, 128), material), 0.44);
+  const disk = tagMaterial(new THREE.Mesh(new THREE.CircleGeometry(radius, 128), material), 0.34);
   disk.rotation.x = -Math.PI / 2;
   disk.renderOrder = -2;
   return disk;
@@ -190,7 +194,7 @@ function createSpiralGalaxy({
     depthWrite: false
   });
   const stars = tagMaterial(new THREE.Points(geometry, material), 0.92);
-  const disk = createLuminousDisk(radius, arms, twist * 2.25, coreColor, armColor);
+  const disk = createLuminousDisk(radius, arms, twist * 1.05, coreColor, armColor);
 
   const glow = tagMaterial(new THREE.Sprite(new THREE.SpriteMaterial({
     map: makeGlowTexture(),
@@ -223,12 +227,42 @@ function createSpiralGalaxy({
     depthWrite: false
   })), 0.22);
 
+  const regionCount = Math.max(180, Math.floor(count * 0.018));
+  const regionPositions = new Float32Array(regionCount * 3);
+  const regionColors = new Float32Array(regionCount * 3);
+  for (let i = 0; i < regionCount; i += 1) {
+    const radiusRatio = 0.16 + Math.pow(random(), 0.72) * 0.74;
+    const radialDistance = radiusRatio * radius;
+    const armIndex = i % arms;
+    const angle = (armIndex / arms) * Math.PI * 2 + radiusRatio * twist + gaussian(random) * 0.075;
+    regionPositions[i * 3] = Math.cos(angle) * radialDistance;
+    regionPositions[i * 3 + 1] = gaussian(random) * thickness * 0.24;
+    regionPositions[i * 3 + 2] = Math.sin(angle) * radialDistance;
+    color.copy(random() > 0.38 ? accent : arm).multiplyScalar(0.78 + random() * 0.44);
+    regionColors[i * 3] = color.r;
+    regionColors[i * 3 + 1] = color.g;
+    regionColors[i * 3 + 2] = color.b;
+  }
+  const regionGeometry = new THREE.BufferGeometry();
+  regionGeometry.setAttribute('position', new THREE.BufferAttribute(regionPositions, 3));
+  regionGeometry.setAttribute('color', new THREE.BufferAttribute(regionColors, 3));
+  const starFormingRegions = tagMaterial(new THREE.Points(regionGeometry, new THREE.PointsMaterial({
+    size: pointSize * 2.35,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  })), 0.48);
+
   const group = new THREE.Group();
   group.name = name;
-  group.add(disk, stars, glow, halo);
+  group.add(disk, stars, starFormingRegions, glow, halo);
   group.userData.disk = disk;
   group.userData.stars = stars;
   group.userData.glow = glow;
+  group.userData.starFormingRegions = starFormingRegions;
   return group;
 }
 
@@ -286,7 +320,7 @@ export function createCosmicEnvironment(compact = false) {
     radius: 118,
     thickness: 5.2,
     arms: 4,
-    twist: 6.4,
+    twist: 4.8,
     seed: 412198,
     coreColor: 0xffb568,
     armColor: 0x6f9fe9,
@@ -301,7 +335,7 @@ export function createCosmicEnvironment(compact = false) {
     radius: 92,
     thickness: 4.2,
     arms: 2,
-    twist: 5.2,
+    twist: 4.1,
     seed: 773901,
     coreColor: 0xffe0b8,
     armColor: 0x9eb8ee,
@@ -317,7 +351,7 @@ export function createCosmicEnvironment(compact = false) {
     radius: 40,
     thickness: 2.6,
     arms: 3,
-    twist: 5.8,
+    twist: 4.6,
     seed: 193381,
     coreColor: 0xffd7ad,
     armColor: 0x83b5f5,
@@ -332,6 +366,23 @@ export function createCosmicEnvironment(compact = false) {
   largeMagellanic.rotation.z = 0.4;
   const smallMagellanic = createDwarfGalaxy('Small Magellanic Cloud', compact ? 850 : 2300, 7, 84519, 0xc2d5ff);
   smallMagellanic.position.set(-108, -40, 115);
+
+  const companionSpecs = [
+    ['M32', 4.2, 91352, 0xffd9ac, [306, 55, -158]],
+    ['M110', 6.2, 59173, 0xc4d2ef, [360, 70, -196]],
+    ['Sagittarius Dwarf', 4.8, 71344, 0xd3b9de, [-35, -15, 28]],
+    ['Fornax Dwarf', 5.6, 22491, 0xb2c9f2, [-128, -44, 104]],
+    ['Sculptor Dwarf', 4.4, 86517, 0xc8d8f4, [-88, -68, 142]],
+    ['NGC 6822', 6.8, 31887, 0x9fc8f2, [196, -38, 174]],
+    ['IC 10', 5.2, 44821, 0xc3a8df, [268, 16, -90]],
+    ['WLM', 4.9, 62915, 0xa9c8ef, [-354, -58, -132]]
+  ];
+  const dwarfCompanions = companionSpecs.map(([name, radius, seed, color, position], index) => {
+    const dwarf = createDwarfGalaxy(name, compact ? 150 + index * 11 : 420 + index * 28, radius, seed, color);
+    dwarf.position.set(...position);
+    dwarf.rotation.set((index % 3) * 0.13, index * 0.29, (index % 2 ? -1 : 1) * 0.18);
+    return dwarf;
+  });
 
   const labels = [
     createGalaxyLabel('MILKY WAY · HOME', 112),
@@ -357,25 +408,41 @@ export function createCosmicEnvironment(compact = false) {
   solarMarker.position.set(38, 0.5, 49);
   milkyWay.add(solarMarker);
 
-  root.add(milkyWay, andromeda, triangulum, largeMagellanic, smallMagellanic, labelGroup);
+  root.add(milkyWay, andromeda, triangulum, largeMagellanic, smallMagellanic, ...dwarfCompanions, labelGroup);
   root.visible = false;
 
-  function update(delta, galaxyOpacity, localOpacity) {
+  function update(delta, galaxyOpacity, localOpacity, motionEnabled = true) {
     root.visible = galaxyOpacity > 0.001;
     setOpacity(milkyWay, galaxyOpacity * (1 - localOpacity * 0.38));
     setOpacity(andromeda, localOpacity * 0.5);
     setOpacity(triangulum, localOpacity * 0.56);
     setOpacity(largeMagellanic, Math.max(galaxyOpacity * 0.08, localOpacity * 0.48));
     setOpacity(smallMagellanic, Math.max(galaxyOpacity * 0.06, localOpacity * 0.42));
+    dwarfCompanions.forEach((dwarf, index) => {
+      setOpacity(dwarf, localOpacity * (0.28 + (index % 3) * 0.055));
+    });
     labels.forEach((label) => {
       label.material.opacity = 0.78 * localOpacity;
     });
-    milkyWay.rotation.y += delta * 0.0022;
-    andromeda.rotation.y -= delta * 0.0012;
-    triangulum.rotation.y += delta * 0.0015;
-    const pulse = 0.76 + Math.sin(performance.now() * 0.0022) * 0.2;
+    if (motionEnabled) {
+      milkyWay.rotation.y += delta * 0.0022;
+      andromeda.rotation.y -= delta * 0.0012;
+      triangulum.rotation.y += delta * 0.0015;
+    }
+    const pulse = motionEnabled ? 0.76 + Math.sin(performance.now() * 0.0022) * 0.2 : 0.82;
     solarMarker.material.opacity = 0.88 * galaxyOpacity * pulse;
   }
 
-  return { root, milkyWay, andromeda, triangulum, largeMagellanic, smallMagellanic, solarMarker, labels, update };
+  return {
+    root,
+    milkyWay,
+    andromeda,
+    triangulum,
+    largeMagellanic,
+    smallMagellanic,
+    dwarfCompanions,
+    solarMarker,
+    labels,
+    update
+  };
 }

@@ -8,7 +8,8 @@
   <link rel="icon" href="data:," />
   <link rel="preload" href="assets/nasa/earth-blue-marble-2048.jpg" as="image" />
   <link rel="preload" href="assets/nasa/earth-black-marble-3600.jpg" as="image" />
-  <link rel="stylesheet" href="style.css?v=scale-cosmic3" />
+  <link rel="preload" href="assets/cosmic/milky-way-sky-band-v1.jpg" as="image" />
+  <link rel="stylesheet" href="style.css?v=scale-cosmic4" />
   <script type="importmap">
     {
       "imports": {
@@ -16,49 +17,61 @@
       }
     }
   </script>
-  <script type="module" src="main.js?v=scale-cosmic3"></script>
+  <script type="module" src="main.js?v=scale-cosmic4"></script>
 </head>
 <body>
-  <main class="experience" aria-label="尺度之外 3D 宇宙尺度探索">
+  <main class="experience" aria-label="尺度之外 3D 宇宙尺度探索" aria-describedby="keyboardHelp">
     <div id="scene" class="scene" aria-hidden="true"></div>
 
     <section class="intro" aria-labelledby="project-title">
-      <p class="kicker">尺度之外</p>
-      <h1 id="project-title">From Earth to the Multiverse</h1>
+      <p class="kicker">尺度之外 <span>· SCALE BEYOND</span></p>
+      <h1 id="project-title" lang="en">From Earth to the Local Group</h1>
+      <p class="journey-route" lang="en">EARTH <i></i> MOON <i></i> SUN <i></i> MILKY WAY</p>
     </section>
 
-    <section class="scale-readout" aria-live="polite">
-      <p id="layerName">Planet Surface</p>
-      <strong id="scaleUnit">Low Earth orbit</strong>
-      <span id="distanceValue">420 km above Earth</span>
+    <section class="scale-readout">
+      <p id="layerName">01 · NEAR-EARTH ORBIT</p>
+      <strong id="scaleUnit">120–2,000 KM ABOVE EARTH</strong>
+      <span id="distanceValue">距地表 · 420 KM</span>
     </section>
 
-    <section class="caption" aria-live="polite">
-      <p id="captionZh">你所看见的，只是其中一个尺度。</p>
-      <p id="captionEn">What you see is only one scale of reality.</p>
+    <section class="caption">
+      <div class="caption-copy">
+        <p id="captionZh">在离地数百公里的轨道上，大气只是一圈极薄的蓝色边缘。</p>
+        <p id="captionEn" lang="en">From near-Earth orbit, the atmosphere is only a thin blue edge around our world.</p>
+      </div>
+      <div id="stageFacts" class="fact-strip" aria-hidden="true">
+        <span>KÁRMÁN LINE · 100 KM</span>
+        <span>LOW ORBIT · 90 MIN</span>
+        <span>ATMOSPHERE · ≈1%</span>
+      </div>
     </section>
 
     <div id="hint" class="hint" role="note">
-      <span>滚轮缩放</span>
-      <span>拖拽移动视角</span>
+      <span>滚轮 / ↑↓ 缩放</span>
+      <span>拖拽观察</span>
     </div>
 
-    <p id="assetStatus" class="asset-status" aria-live="polite">NASA IMAGERY · LOADING</p>
+    <p id="assetStatus" class="asset-status">NASA DATA + ORIGINAL VISIBLE-SKY ART · LOADING</p>
 
     <p id="locationMarker" class="location-marker" aria-hidden="true">
-      <span>YOU ARE HERE</span>
-      ORION SPUR · 27,000 LY FROM CENTER
+      <span>太阳系位置 · YOU ARE HERE</span>
+      猎户支臂 · 距银心约 26,000 光年
     </p>
 
     <div class="scale-meter" aria-hidden="true">
       <span id="scaleBar"></span>
-      <i style="--position: 0%">地表</i>
-      <i style="--position: 9%">地球</i>
-      <i style="--position: 21%">地月</i>
-      <i style="--position: 44%">太阳系</i>
-      <i style="--position: 69%">银河系</i>
-      <i style="--position: 100%">本星系群</i>
+      <i class="meter-tick" data-stage="0" style="--position: 0%">近地轨道</i>
+      <i class="meter-tick mobile-priority" data-stage="1" style="--position: 9%">地球</i>
+      <i class="meter-tick" data-stage="2" style="--position: 21%">地月</i>
+      <i class="meter-tick mobile-priority" data-stage="3" style="--position: 44%">太阳系</i>
+      <i class="meter-tick" data-stage="4" style="--position: 58%">恒星近邻</i>
+      <i class="meter-tick mobile-priority" data-stage="5" style="--position: 72%">银河系</i>
+      <i class="meter-tick mobile-priority" data-stage="6" style="--position: 100%">本星系群</i>
     </div>
+
+    <p id="stageStatus" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+    <p id="keyboardHelp" class="sr-only">使用方向键上下、Page Up、Page Down、Home 和 End 可切换宇宙尺度。</p>
   </main>
 </body>
 </html>

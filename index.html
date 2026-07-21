@@ -6,15 +6,16 @@
   <meta name="description" content="《尺度之外》MVP：通过滚轮缩放和拖拽视角探索从地球到太阳系的真实 3D 宇宙尺度体验。" />
   <title>尺度之外 | From Earth to the Multiverse</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="style.css?v=scale-mvp1" />
+  <link rel="preload" href="assets/nasa/earth-blue-marble-2048.jpg" as="image" />
+  <link rel="stylesheet" href="style.css?v=scale-mvp2" />
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js"
+        "three": "./vendor/three.module.js"
       }
     }
   </script>
-  <script type="module" src="main.js?v=scale-mvp1"></script>
+  <script type="module" src="main.js?v=scale-mvp2"></script>
 </head>
 <body>
   <main class="experience" aria-label="尺度之外 3D 宇宙尺度探索">
@@ -28,6 +29,7 @@
     <section class="scale-readout" aria-live="polite">
       <p id="layerName">Planet Surface</p>
       <strong id="scaleUnit">Low Earth orbit</strong>
+      <span id="distanceValue">420 km above Earth</span>
     </section>
 
     <section class="caption" aria-live="polite">
@@ -40,8 +42,14 @@
       <span>拖拽移动视角</span>
     </div>
 
+    <p id="assetStatus" class="asset-status" aria-live="polite">NASA IMAGERY · LOADING</p>
+
     <div class="scale-meter" aria-hidden="true">
       <span id="scaleBar"></span>
+      <i style="--position: 0%">地表</i>
+      <i style="--position: 24%">地球</i>
+      <i style="--position: 48%">地月</i>
+      <i style="--position: 100%">太阳系</i>
     </div>
   </main>
 </body>

@@ -5,7 +5,7 @@
 ## 当前阶段
 
 - 阶段：第六阶段 · 电影级连续转场、近实时高清地球与银河真实性升级
-- 状态：`scale-cosmic6` 本地发布候选已完成主体开发、银河二次精修和桌面 / 手机七段验收，准备发布
+- 状态：`scale-cosmic6` 已完成主体开发、银河二次精修、桌面 / 手机七段验收，并发布到 GitHub Pages
 - 最近更新：2026-07-23
 - 项目：纯静态 HTML / CSS / JavaScript + Three.js `0.165.0`，无构建步骤
 - 仓库：`https://github.com/loren-wu/scale-beyond.git`
@@ -95,19 +95,20 @@
 
 ## 发布状态
 
-- 当前稳定线上版本：`scale-cosmic5`
-- 当前本地发布候选：`scale-cosmic6`，尚未提交 / 推送；发布后需在此记录实际功能提交哈希和 Pages 回源结果。
+- 当前稳定线上版本：`scale-cosmic6`
+- 功能提交：`a3bd66d`（`Upgrade cinematic Earth and galaxy journey`）
+- GitHub Pages workflow `29981307439` 已完成，结论为 `success`，部署 HEAD 与 `a3bd66d516bc277aa7daa7df9b8d277f131407d7` 一致。
+- Pages 首页已确认返回 `scale-cosmic6`；`main.js`、`src/live-earth.js`、`src/galaxy.js` 和 `assets/nasa/earth-blue-marble-5400.jpg` 均在线返回 HTTP 200，5400 资产大小为 `1,005,484` bytes。
 - 旗舰升级提交：`f7dfbbf`（`Overhaul Scale Beyond cosmic visuals and controls`）
-- GitHub Pages 已确认返回 `scale-cosmic5`，旧版 `scale-cosmic4` 标识已消失。
+- 上一稳定版：`scale-cosmic5`（记录提交 `ab06519`）。
 - `main.js`、控制器、银河/行星/天幕模块、Three.js，以及关键 NASA 与原创银河资源均在线返回 HTTP 200。
 - 线上首屏已在真实浏览器打开并截图确认；本地完整桌面/手机旅程仍保持无 warning、无 error、无 WebGL Shader 编译错误。
 - 仓库中存在与本项目无关的未跟踪脚本、安装包、文档和备份；提交时只能精确暂存 Scale Beyond 文件，禁止 `git add -A`。
 
 ## 下一步
 
-1. 完成银河第二轮亮度 / 断裂结构复检、全量语法与 diff 检查，然后精确暂存 Scale Beyond 文件并发布 `scale-cosmic6`。
-2. 等待 GitHub Pages 返回 `scale-cosmic6`，复查页面、模块、5400 地球资源和 GIBS 安全 fallback，再记录发布哈希。
-3. 后续可加入实际帧率采样和动态粒子质量降级，或扩展本超星系团 / 拉尼亚凯亚 / 宇宙网，但保持现有七段旅程的节奏与控制逻辑。
+1. 后续可加入实际帧率采样和动态粒子质量降级，让低端设备在保留构图的同时主动调整粒子与纹理预算。
+2. 如继续扩展尺度，可新增本超星系团 / 拉尼亚凯亚 / 宇宙网，但保持现有七段旅程的节奏与控制逻辑。
 
 ## 主要历史检查点
 
@@ -115,4 +116,4 @@
 - 2026-07-21：完成七段旅程、地球昼夜、太阳系、银河系、本星系群与首次桌面/手机验收。
 - 2026-07-21：完成原创可见光银河天幕、Spitzer GLIMPSE 360、黄道光、日球层、柯伊伯带和纪录片式文案排版，发布 `scale-cosmic4`。
 - 2026-07-21：完成全场景真实感、星系多样性、深空星系场和控制系统重构，以 `f7dfbbf` 发布 `scale-cosmic5` 并通过线上资源验证。
-- 2026-07-23：完成 `scale-cosmic6` 主体开发：电影级连续转场、实时太阳 / NASA GIBS 近实时地球、5400 地貌底图、高清行星纹理和银河真实性升级；桌面 / 手机七段本地验收通过，待发布。
+- 2026-07-23：完成 `scale-cosmic6`：电影级连续转场、实时太阳 / NASA GIBS 近实时地球、5400 地貌底图、高清行星纹理和银河真实性升级；以 `a3bd66d` 发布，桌面 / 手机七段本地验收及 Pages 回源验证通过。

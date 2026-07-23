@@ -79,6 +79,10 @@ export function createCosmicControls(options = {}) {
   const lineHeight = Number.isFinite(options.wheelLineHeight) ? options.wheelLineHeight : 16;
   const maxWheelPixels = Number.isFinite(options.maxWheelPixels) ? options.maxWheelPixels : 800;
   const wheelLogUnit = Number.isFinite(options.wheelLogUnit) ? options.wheelLogUnit : 24;
+  const wheelDeadZone = Number.isFinite(options.wheelDeadZone) ? Math.max(0, options.wheelDeadZone) : 0.18;
+  const wheelCurvePower = Number.isFinite(options.wheelCurvePower) ? Math.max(0.5, options.wheelCurvePower) : 1.16;
+  const wheelBurstReset = Number.isFinite(options.wheelBurstReset) ? Math.max(32, options.wheelBurstReset) : 140;
+  const targetLeadFactor = Number.isFinite(options.targetLeadFactor) ? Math.max(1, options.targetLeadFactor) : 2.65;
   const keyboardOrbitStep = Number.isFinite(options.keyboardOrbitStep) ? options.keyboardOrbitStep : 0.12;
   const keyboardPitchStep = Number.isFinite(options.keyboardPitchStep) ? options.keyboardPitchStep : 0.08;
   const scaleSegments = normalizeScaleSegments(options.scaleSegments ?? DEFAULT_SCALE_SEGMENTS);
@@ -98,6 +102,9 @@ export function createCosmicControls(options = {}) {
   let isPinching = false;
   let previousPinchDistance = 0;
   let lastGestureClock = 0;
+  let lastWheelClock = 0;
+  let lastWheelDirection = 0;
+  let wheelResidue = 0;
   let destroyed = false;
 
   const pointers = new Map();
@@ -134,6 +141,9 @@ export function createCosmicControls(options = {}) {
     zoomVelocity = 0;
     yawVelocity = 0;
     pitchVelocity = 0;
+    wheelResidue = 0;
+    lastWheelClock = 0;
+    lastWheelDirection = 0;
     scale = targetScale;
   }
 
@@ -172,17 +182,51 @@ export function createCosmicControls(options = {}) {
     if (magnitude < 0.001) return 0;
     const denominator = Math.log1p(maxWheelPixels / wheelLogUnit);
     const curved = Math.log1p(magnitude / wheelLogUnit) / denominator;
-    return Math.sign(pixels) * clamp(curved, 0, 1);
+    return Math.sign(pixels) * Math.pow(clamp(curved, 0, 1), wheelCurvePower);
   }
 
   function onWheel(event) {
     if (event.cancelable) event.preventDefault();
+
+    const pixels = normalizeWheelPixels(event);
+    const magnitude = Math.abs(pixels);
+    if (magnitude <= wheelDeadZone) return;
     notifyInteract('wheel', event);
 
-    const curvedDelta = curveWheelInput(normalizeWheelPixels(event));
+    const now = ownerWindow.performance?.now?.() ?? Date.now();
+    const gap = lastWheelClock > 0 ? now - lastWheelClock : wheelBurstReset;
+    const direction = Math.sign(pixels);
+    if (gap > wheelBurstReset) {
+      wheelResidue = 0;
+      lastWheelDirection = 0;
+    } else if (lastWheelDirection !== 0 && direction !== lastWheelDirection) {
+      // Brake an old burst before accepting the opposite direction. This keeps
+      // short trackpad reversals from producing a visible tug-of-war.
+      wheelResidue = 0;
+      zoomVelocity *= 0.34;
+    }
+    lastWheelClock = now;
+    lastWheelDirection = direction;
+
+    const stabilizedPixels = direction * (magnitude - wheelDeadZone);
+    let releasedPixels = stabilizedPixels;
+    if (Math.abs(stabilizedPixels) < 6) {
+      // High-resolution wheels often emit sub-pixel noise. Integrate it into a
+      // small burst and release only part per event, retaining deliberate slow
+      // gestures without letting sensor chatter shake the camera.
+      wheelResidue = clamp(wheelResidue + stabilizedPixels, -maxWheelPixels, maxWheelPixels);
+      const releaseRatio = clamp(0.42 + gap / 34, 0.42, 0.76);
+      releasedPixels = wheelResidue * releaseRatio;
+      wheelResidue -= releasedPixels;
+      if (Math.abs(releasedPixels) < 0.24) return;
+    } else {
+      wheelResidue *= 0.18;
+    }
+
+    const curvedDelta = curveWheelInput(releasedPixels);
     if (curvedDelta === 0) return;
 
-    const step = getScaleStep(scale);
+    const step = getScaleStep((scale + targetScale) * 0.5);
     if (reducedMotion) {
       setTargetScale(targetScale + curvedDelta * step, true);
       return;
@@ -190,6 +234,7 @@ export function createCosmicControls(options = {}) {
 
     // An impulse integrates to roughly one stage-tuned `step`; damping makes it
     // feel physical without making high-resolution trackpads hypersensitive.
+    if (zoomVelocity !== 0 && Math.sign(zoomVelocity) !== Math.sign(curvedDelta)) zoomVelocity *= 0.42;
     zoomVelocity += curvedDelta * step * zoomDamping;
     const velocityLimit = Math.max(420, step * zoomDamping * 3.5);
     zoomVelocity = clamp(zoomVelocity, -velocityLimit, velocityLimit);
@@ -402,11 +447,28 @@ export function createCosmicControls(options = {}) {
       targetScale = clamp(unclampedTarget, minScale, maxScale);
       if (targetScale !== unclampedTarget) zoomVelocity = 0;
       else zoomVelocity *= Math.exp(-zoomDamping * delta);
+
+      const localStep = getScaleStep(scale);
+      const speedRatio = clamp(Math.abs(zoomVelocity) / Math.max(localStep * zoomDamping * 2.2, 1), 0, 1);
+      const maxLead = localStep * lerp(1.4, targetLeadFactor, speedRatio);
+      const lead = targetScale - scale;
+      if (Math.abs(lead) > maxLead) {
+        targetScale = scale + Math.sign(lead) * maxLead;
+        zoomVelocity *= 0.78;
+      }
     } else {
       zoomVelocity = 0;
     }
 
-    scale = damp(scale, targetScale, zoomResponse, delta);
+    wheelResidue *= Math.exp(-12 * delta);
+    if (Math.abs(wheelResidue) < 0.001) wheelResidue = 0;
+
+    const responseSpeed = clamp(
+      Math.abs(zoomVelocity) / Math.max(getScaleStep(scale) * zoomDamping * 1.8, 1),
+      0,
+      1
+    );
+    scale = damp(scale, targetScale, zoomResponse * lerp(0.84, 1.1, responseSpeed), delta);
     if (Math.abs(scale - targetScale) < 0.001) scale = targetScale;
 
     if (pointers.size === 0) {
@@ -431,7 +493,12 @@ export function createCosmicControls(options = {}) {
   function setScale(nextValue, config = {}) {
     const immediate = config.immediate ?? true;
     setTargetScale(nextValue, immediate || reducedMotion);
-    if (config.clearVelocity ?? true) zoomVelocity = 0;
+    if (config.clearVelocity ?? true) {
+      zoomVelocity = 0;
+      wheelResidue = 0;
+      lastWheelClock = 0;
+      lastWheelDirection = 0;
+    }
     return writeSnapshot(frameState);
   }
 

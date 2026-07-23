@@ -92,15 +92,45 @@ function paintTerrainVeins(context, width, height, random, palette, count = 90) 
   context.restore();
 }
 
+function paintMacroVariation(context, width, height, random, palette, count = 48) {
+  context.save();
+  context.globalCompositeOperation = 'soft-light';
+  for (let index = 0; index < count; index += 1) {
+    const x = random() * width;
+    const y = height * (0.05 + random() * 0.9);
+    const radiusX = width * (0.025 + random() * 0.13);
+    const radiusY = height * (0.018 + random() * 0.1);
+    const gradient = context.createRadialGradient(
+      x - radiusX * 0.22,
+      y - radiusY * 0.18,
+      Math.max(1, radiusY * 0.08),
+      x,
+      y,
+      radiusX
+    );
+    const color = palette[Math.floor(random() * palette.length)];
+    gradient.addColorStop(0, color);
+    gradient.addColorStop(0.58, color);
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    context.globalAlpha = 0.035 + random() * 0.1;
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.ellipse(x, y, radiusX, radiusY, (random() - 0.5) * 1.35, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
+}
+
 function paintRocky(context, width, height, random, palette, craterCount, polarCaps = false) {
   const gradient = context.createLinearGradient(0, 0, width, height);
   palette.forEach((color, index) => gradient.addColorStop(index / (palette.length - 1), color));
   context.fillStyle = gradient;
   context.fillRect(0, 0, width, height);
 
+  paintMacroVariation(context, width, height, random, palette, 62);
   paintFractalGrain(context, width, height, random, 0.24);
-  noiseLayer(context, width, height, random, palette, 1500, 0.09);
-  paintTerrainVeins(context, width, height, random, palette, 110);
+  noiseLayer(context, width, height, random, palette, width > 1200 ? 2600 : 1500, 0.075);
+  paintTerrainVeins(context, width, height, random, palette, width > 1200 ? 185 : 110);
 
   for (let i = 0; i < craterCount; i += 1) {
     const x = random() * width;
@@ -123,6 +153,23 @@ function paintRocky(context, width, height, random, palette, craterCount, polarC
     context.beginPath();
     context.arc(x, y, radius, 0, Math.PI * 2);
     context.fill();
+
+    if (radius > width * 0.009 && random() > 0.48) {
+      context.save();
+      context.translate(x, y);
+      context.rotate(random() * Math.PI);
+      context.strokeStyle = 'rgba(235,220,196,0.08)';
+      context.globalAlpha = 0.28;
+      context.lineWidth = Math.max(0.35, radius * 0.028);
+      for (let ray = 0; ray < 7; ray += 1) {
+        const angle = (ray / 7) * Math.PI * 2 + (random() - 0.5) * 0.26;
+        context.beginPath();
+        context.moveTo(Math.cos(angle) * radius * 0.72, Math.sin(angle) * radius * 0.72);
+        context.lineTo(Math.cos(angle) * radius * (1.1 + random() * 0.72), Math.sin(angle) * radius * (1.1 + random() * 0.72));
+        context.stroke();
+      }
+      context.restore();
+    }
   }
 
   if (polarCaps) {
@@ -167,6 +214,31 @@ function paintGasGiant(context, width, height, random, palette, options = {}) {
     context.moveTo(x, cy);
     context.bezierCurveTo(x + length * 0.3, cy - 3, x + length * 0.68, cy + 4, x + length, cy);
     context.stroke();
+  }
+  context.restore();
+
+  context.save();
+  context.globalCompositeOperation = 'soft-light';
+  const vortexCount = options.vortexCount ?? 34;
+  for (let index = 0; index < vortexCount; index += 1) {
+    const x = random() * width;
+    const cy = height * (0.1 + random() * 0.8);
+    const radiusX = width * (0.003 + random() * 0.018);
+    const radiusY = radiusX * (0.2 + random() * 0.34);
+    const direction = random() > 0.5 ? 1 : -1;
+    const rotation = (random() - 0.5) * 0.18;
+    context.save();
+    context.translate(x, cy);
+    context.rotate(rotation);
+    context.globalAlpha = 0.055 + random() * 0.12;
+    for (let ring = 0; ring < 3; ring += 1) {
+      context.strokeStyle = palette[(index + ring) % palette.length];
+      context.lineWidth = Math.max(0.35, radiusY * 0.14);
+      context.beginPath();
+      context.ellipse(0, 0, radiusX * (1 - ring * 0.19), radiusY * (1 - ring * 0.16), direction * ring * 0.05, 0, Math.PI * 2);
+      context.stroke();
+    }
+    context.restore();
   }
   context.restore();
 
@@ -225,7 +297,7 @@ function paintGasGiant(context, width, height, random, palette, options = {}) {
 
 export function createPlanetTexture(name, anisotropy, compact = false) {
   const canvas = document.createElement('canvas');
-  canvas.width = compact ? 512 : 1024;
+  canvas.width = compact ? 1024 : 2048;
   canvas.height = canvas.width / 2;
   const context = canvas.getContext('2d');
   const random = seededRandom([...name].reduce((sum, character) => sum + character.charCodeAt(0), 811));
@@ -272,14 +344,16 @@ export function createPlanetTexture(name, anisotropy, compact = false) {
         greatRedSpot: true,
         swirlAlpha: 0.29,
         fineBands: 0.32,
-        grain: 0.14
+        grain: 0.14,
+        vortexCount: compact ? 28 : 52
       });
       break;
     case 'Saturn':
       paintGasGiant(context, canvas.width, canvas.height, random, ['#796744', '#b9a16e', '#ead9a4', '#96825b'], {
         swirlAlpha: 0.13,
         fineBands: 0.2,
-        grain: 0.08
+        grain: 0.08,
+        vortexCount: compact ? 16 : 28
       });
       break;
     case 'Uranus':
@@ -294,7 +368,8 @@ export function createPlanetTexture(name, anisotropy, compact = false) {
         swirlAlpha: 0.22,
         fineBands: 0.18,
         grain: 0.08,
-        storm: true
+        storm: true,
+        vortexCount: compact ? 24 : 42
       });
       break;
     default:
@@ -306,7 +381,7 @@ export function createPlanetTexture(name, anisotropy, compact = false) {
 
 export function createSunTexture(anisotropy, compact = false) {
   const canvas = document.createElement('canvas');
-  canvas.width = compact ? 512 : 1024;
+  canvas.width = compact ? 768 : 1536;
   canvas.height = canvas.width / 2;
   const context = canvas.getContext('2d');
   const random = seededRandom(57721);
@@ -321,7 +396,7 @@ export function createSunTexture(anisotropy, compact = false) {
   paintFractalGrain(context, canvas.width, canvas.height, random, 0.28);
 
   context.globalCompositeOperation = 'screen';
-  for (let i = 0; i < (compact ? 2600 : 5200); i += 1) {
+  for (let i = 0; i < (compact ? 3600 : 7600); i += 1) {
     const x = random() * canvas.width;
     const y = random() * canvas.height;
     const radius = 0.35 + random() * 2.1;

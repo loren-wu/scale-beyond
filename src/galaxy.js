@@ -33,6 +33,93 @@ function chooseWeighted(random, weights) {
   return weights.length - 1;
 }
 
+function createArmProfile(config) {
+  const random = seededRandom((config.seed ^ 0x9e3779b9) >>> 0);
+  const sourceWeights = config.armWeights ?? Array.from({ length: config.arms }, () => 1);
+  const strongest = Math.max(...sourceWeights, 0.0001);
+  const phaseJitter = config.armPhaseJitter ?? (config.arms > 2 ? 0.16 : 0.08);
+  const weights = [0, 0, 0, 0];
+  const phases = [0, 0, 0, 0];
+  const pitchScales = [1, 1, 1, 1];
+  const segmentSeeds = [0, 0, 0, 0];
+
+  for (let index = 0; index < 4; index += 1) {
+    if (index >= config.arms) continue;
+    weights[index] = sourceWeights[index] / strongest;
+    phases[index] = (index / config.arms) * TAU + gaussian(random) * phaseJitter;
+    pitchScales[index] = 0.88 + random() * 0.24;
+    segmentSeeds[index] = random() * 17 + index * 3.17;
+  }
+
+  return {
+    sourceWeights,
+    weights,
+    phases,
+    pitchScales,
+    segmentSeeds,
+    warpPhase: random() * TAU
+  };
+}
+
+function sampleExponentialDisk(random, scale = 0.235) {
+  // The radius of an exponential disk follows r * exp(-r / scale). The
+  // product-of-uniforms form samples that distribution without a lookup table.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const radius = -Math.log(Math.max(0.000001, random() * random())) * scale;
+    if (radius <= 1) return 0.045 + radius * 0.955;
+  }
+  return 0.76 + random() * 0.24;
+}
+
+function armSegmentStrength(radialRatio, armIndex, armProfile, irregularity, angle = 0) {
+  const seed = armProfile.segmentSeeds[armIndex];
+  const broad = 0.5 + 0.5 * Math.sin(radialRatio * (11.5 + armIndex * 1.35) + seed);
+  const broken = 0.5 + 0.5 * Math.sin(radialRatio * 27.0 - seed * 1.71);
+  const azimuthalWindow = 0.5 + 0.5 * Math.sin(
+    angle * (1.35 + armIndex * 0.19) + radialRatio * 4.7 + seed * 0.73
+  );
+  const knotWindow = 0.5 + 0.5 * Math.sin(angle * 3.1 - radialRatio * 8.6 + seed * 1.43);
+  return clamp(
+    0.2 + broad * 0.29 + broken * 0.15 * irregularity + azimuthalWindow * 0.24 + knotWindow * 0.12,
+    0.12,
+    1
+  );
+}
+
+function armAngleAt(radialRatio, armIndex, config, armProfile) {
+  return armProfile.phases[armIndex]
+    + radialRatio * config.twist * armProfile.pitchScales[armIndex]
+    + Math.sin(radialRatio * (8.2 + armIndex * 0.74) + armProfile.segmentSeeds[armIndex])
+      * config.irregularity * 0.075;
+}
+
+function createStarFormationComplexes(config, random, armProfile) {
+  const count = config.compact
+    ? Math.max(8, config.arms * 3)
+    : Math.max(20, Math.round(config.radius * 0.24));
+  const complexes = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const armIndex = chooseWeighted(random, armProfile.sourceWeights);
+    let radialRatio = config.starFormationRing
+      ? clamp(config.starFormationRing + gaussian(random) * 0.085, 0.2, 0.92)
+      : 0.2 + Math.pow(random(), 0.82) * 0.7;
+    // Prefer surviving arm fragments, leaving genuine gaps between complexes.
+    for (let retry = 0; retry < 3; retry += 1) {
+      const candidateAngle = armAngleAt(radialRatio, armIndex, config, armProfile);
+      if (armSegmentStrength(radialRatio, armIndex, armProfile, config.irregularity, candidateAngle) > 0.55) break;
+      radialRatio = 0.2 + Math.pow(random(), 0.82) * 0.7;
+    }
+    complexes.push({
+      armIndex,
+      radialRatio,
+      angle: armAngleAt(radialRatio, armIndex, config, armProfile),
+      spread: 0.008 + random() * 0.015
+    });
+  }
+  return complexes;
+}
+
 function makeGlowTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
@@ -119,14 +206,18 @@ function createStarPointMaterial(pointScale, maximumSize = 9) {
       void main() {
         float distanceToCenter = length(gl_PointCoord - 0.5);
         if (distanceToCenter > 0.5) discard;
-        float feather = 1.0 - smoothstep(0.08, 0.5, distanceToCenter);
-        float core = pow(max(0.0, 1.0 - distanceToCenter * 2.0), 4.0);
-        gl_FragColor = vec4(vColor * 1.24 + vec3(core * 0.24), (feather * 0.76 + core * 0.3) * opacity);
+        float feather = 1.0 - smoothstep(0.04, 0.5, distanceToCenter);
+        float core = pow(max(0.0, 1.0 - distanceToCenter * 2.0), 5.5);
+        float halo = exp(-distanceToCenter * 8.5);
+        vec3 radiance = vColor * (0.7 + halo * 0.42) + vec3(core * 0.075);
+        gl_FragColor = vec4(radiance, (feather * 0.54 + core * 0.34) * opacity);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }
     `,
     vertexColors: true
   });
-  material.toneMapped = false;
+  material.toneMapped = true;
   return material;
 }
 
@@ -151,7 +242,10 @@ function createLuminousDisk({
   barStrength,
   irregularity,
   seed,
-  compact
+  compact,
+  armProfile,
+  warpStrength = 0.018,
+  diskOpacity = 0.62
 }) {
   const material = new THREE.ShaderMaterial({
     transparent: true,
@@ -167,13 +261,32 @@ function createLuminousDisk({
       twist: { value: twist },
       barStrength: { value: barStrength },
       irregularity: { value: irregularity },
-      seedOffset: { value: (seed % 991) / 991 }
+      seedOffset: { value: (seed % 991) / 991 },
+      radius: { value: radius },
+      warpStrength: { value: warpStrength },
+      warpPhase: { value: armProfile.warpPhase },
+      armWeights: { value: new THREE.Vector4(...armProfile.weights) },
+      armPhases: { value: new THREE.Vector4(...armProfile.phases) },
+      armPitch: { value: new THREE.Vector4(...armProfile.pitchScales) },
+      armSegments: { value: new THREE.Vector4(...armProfile.segmentSeeds) }
     },
     vertexShader: `
+      uniform float radius;
+      uniform float warpStrength;
+      uniform float warpPhase;
       varying vec2 vUv;
       void main() {
         vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vec3 transformed = position;
+        vec2 diskPoint = (uv - 0.5) * 2.0;
+        float radial = length(diskPoint);
+        float angle = atan(diskPoint.y, diskPoint.x);
+        float outerDisk = smoothstep(0.53, 1.0, radial);
+        float warp = sin(angle - warpPhase)
+          * outerDisk * outerDisk
+          * radius * warpStrength;
+        transformed.z += warp;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
       }
     `,
     fragmentShader: `
@@ -186,6 +299,10 @@ function createLuminousDisk({
       uniform float barStrength;
       uniform float irregularity;
       uniform float seedOffset;
+      uniform vec4 armWeights;
+      uniform vec4 armPhases;
+      uniform vec4 armPitch;
+      uniform vec4 armSegments;
       varying vec2 vUv;
 
       float hash21(vec2 point) {
@@ -205,50 +322,245 @@ function createLuminousDisk({
         return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
       }
 
+      float angularDistance(float angle) {
+        return abs(atan(sin(angle), cos(angle)));
+      }
+
+      float armRidge(
+        float angle,
+        float radial,
+        float phaseOffset,
+        float pitchScale,
+        float weight,
+        float segmentSeed
+      ) {
+        if (weight <= 0.001) return 0.0;
+        float meander = sin(radial * (8.2 + segmentSeed * 0.035) + segmentSeed)
+          * irregularity * 0.075;
+        float ridgeAngle = phaseOffset + radial * twist * pitchScale + meander;
+        float width = 0.085 + radial * 0.115 + irregularity * 0.018;
+        float ridge = exp(-pow(angularDistance(angle - ridgeAngle) / width, 2.0));
+        vec2 polarPoint = vec2(cos(angle), sin(angle)) * radial;
+        float broadFragment = noise21(polarPoint * 5.3 + vec2(segmentSeed, segmentSeed * 0.31));
+        float fineFragment = noise21(vec2(
+          radial * 17.0 - segmentSeed + angle * 1.9,
+          angle * 2.4 - radial * 5.1 + segmentSeed * 0.27
+        ));
+        float rhythm = 0.5 + 0.5 * sin(radial * (11.5 + segmentSeed * 0.08) + segmentSeed);
+        float sector = 0.5 + 0.5 * sin(
+          angle * (1.25 + fract(segmentSeed) * 0.7) + radial * 4.6 + segmentSeed * 0.83
+        );
+        float survival = smoothstep(
+          0.22,
+          0.77,
+          broadFragment * 0.36 + fineFragment * 0.24 + rhythm * 0.16 + sector * 0.24
+        );
+        return ridge * weight * mix(0.07, 1.0, survival);
+      }
+
       void main() {
         vec2 point = (vUv - 0.5) * 2.0;
         float radial = length(point);
-        if (radial > 1.0) discard;
-
         float angle = atan(point.y, point.x);
+        float edgeRadius = 0.94
+          + sin(angle * 3.0 + seedOffset * 6.28318) * 0.035
+          + sin(angle * 5.0 - seedOffset * 4.1) * 0.018;
+        if (radial > edgeRadius) discard;
+        float edgeRadial = radial / edgeRadius;
         float coarseNoise = noise21(point * 4.7 + vec2(seedOffset * 9.0));
-        float fineNoise = noise21(point * 16.0 - vec2(seedOffset * 11.0));
-        float warp = sin(angle * 3.0 + radial * 8.0 + seedOffset * 8.0) * irregularity;
-        float phase = angle * arms - radial * twist + warp + (coarseNoise - 0.5) * irregularity * 1.8;
-        float mainArm = pow(0.5 + 0.5 * cos(phase), 9.0);
-        float branch = pow(0.5 + 0.5 * cos(phase * 2.0 + radial * 13.0 + fineNoise), 16.0);
-        float armEnvelope = smoothstep(0.1, 0.28, radial) * (1.0 - smoothstep(0.72, 1.0, radial));
-        float patchiness = mix(0.5, 1.0, coarseNoise) * mix(0.74, 1.0, fineNoise);
+        float fineNoise = noise21(point * 18.0 - vec2(seedOffset * 11.0));
 
-        float disk = exp(-radial * 3.0) * 0.22;
-        float bulge = exp(-radial * 12.5) * 1.22;
+        float arm0 = armRidge(angle, radial, armPhases.x, armPitch.x, armWeights.x, armSegments.x);
+        float arm1 = armRidge(angle, radial, armPhases.y, armPitch.y, armWeights.y, armSegments.y);
+        float arm2 = armRidge(angle, radial, armPhases.z, armPitch.z, armWeights.z, armSegments.z);
+        float arm3 = armRidge(angle, radial, armPhases.w, armPitch.w, armWeights.w, armSegments.w);
+        float mainArm = arm0 + arm1 + arm2 + arm3;
+
+        float branchEnvelope = smoothstep(0.36, 0.58, radial) * (1.0 - smoothstep(0.82, 1.0, radial));
+        float branchOffset = 0.18 + radial * 0.11 + irregularity * 0.045;
+        float branch = armRidge(angle, radial, armPhases.x + branchOffset, armPitch.x * 0.94, armWeights.x, armSegments.x + 4.7)
+          + armRidge(angle, radial, armPhases.y - branchOffset * 0.8, armPitch.y * 1.07, armWeights.y, armSegments.y + 6.1)
+          + armRidge(angle, radial, armPhases.z + branchOffset * 0.7, armPitch.z * 0.91, armWeights.z, armSegments.z + 8.3)
+          + armRidge(angle, radial, armPhases.w - branchOffset, armPitch.w * 1.08, armWeights.w, armSegments.w + 10.9);
+        float armEnvelope = smoothstep(0.11, 0.25, radial) * (1.0 - smoothstep(0.82, 1.0, radial));
+        float patchiness = mix(0.58, 1.0, coarseNoise) * mix(0.76, 1.0, fineNoise);
+        float angularBreak = mix(
+          0.12,
+          1.0,
+          smoothstep(0.24, 0.76, noise21(point * 3.2 + vec2(seedOffset * 17.0, 6.4)))
+        );
+        float lopsided = 0.8
+          + sin(angle - seedOffset * 6.28318) * 0.13
+          + sin(angle * 2.0 + 1.7) * 0.055;
+
+        float disk = exp(-radial / 0.34) * 0.23 * lopsided;
+        float bulge = exp(-pow(radial / 0.145, 0.72)) * 0.74;
         float barAngle = 0.43;
         mat2 barRotation = mat2(cos(barAngle), -sin(barAngle), sin(barAngle), cos(barAngle));
         vec2 barPoint = barRotation * point;
-        float bar = exp(-pow(abs(barPoint.x) / 0.34, 1.55) - pow(abs(barPoint.y) / 0.075, 1.35));
+        float bar = exp(-pow(abs(barPoint.x) / 0.36, 1.7) - pow(abs(barPoint.y) / 0.068, 1.28));
         bar *= barStrength * (1.0 - smoothstep(0.18, 0.54, radial));
 
-        float dustPhase = phase + 0.56 + irregularity * sin(radial * 17.0);
-        float dustLane = pow(0.5 + 0.5 * cos(dustPhase), 18.0) * armEnvelope;
-        float dustFragments = smoothstep(0.54, 0.8, noise21(point * 24.0 + vec2(7.0)));
-        float transmission = 1.0 - dustLane * (0.55 + dustFragments * 0.27);
+        float dustOffset = 0.075 + radial * 0.065;
+        float dustLane = armRidge(angle, radial, armPhases.x + dustOffset, armPitch.x, armWeights.x, armSegments.x + 1.9)
+          + armRidge(angle, radial, armPhases.y + dustOffset, armPitch.y, armWeights.y, armSegments.y + 1.9)
+          + armRidge(angle, radial, armPhases.z + dustOffset, armPitch.z, armWeights.z, armSegments.z + 1.9)
+          + armRidge(angle, radial, armPhases.w + dustOffset, armPitch.w, armWeights.w, armSegments.w + 1.9);
+        float dustFragments = smoothstep(0.46, 0.78, noise21(point * 25.0 + vec2(7.0, 13.0)));
+        dustLane = clamp(dustLane * armEnvelope * mix(0.48, 1.0, dustFragments), 0.0, 1.0);
+        float transmission = 1.0 - dustLane * 0.68;
 
-        float armsLight = (mainArm * 0.47 + branch * 0.12) * armEnvelope * patchiness;
-        float feather = 1.0 - smoothstep(0.78, 1.0, radial);
-        float alpha = (disk + bulge + bar + armsLight) * transmission * feather * opacity;
+        float armsLight = (mainArm * 0.29 + branch * branchEnvelope * 0.085)
+          * armEnvelope * patchiness * angularBreak;
+        float stellarComplexes = pow(smoothstep(0.61, 0.9, fineNoise), 2.0) * mainArm * armEnvelope;
+        float feather = 1.0 - smoothstep(0.76, 1.0, edgeRadial);
+        float alpha = (disk + bulge + bar * 0.5 + armsLight + stellarComplexes * 0.075)
+          * transmission * feather * opacity;
         vec3 color = mix(coreColor, armColor, smoothstep(0.1, 0.64, radial));
-        color = mix(color, accentColor, branch * armEnvelope * 0.16);
-        color *= mix(0.94, 1.24, fineNoise);
+        color = mix(color, accentColor, stellarComplexes * 0.14);
+        color *= mix(0.76, 1.04, fineNoise);
+        color *= 1.0 - dustLane * 0.28;
         gl_FragColor = vec4(color, alpha);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }
     `
   });
-  material.toneMapped = false;
-  const geometry = new THREE.CircleGeometry(radius, compact ? 80 : 144);
+  material.toneMapped = true;
+  const segments = compact ? 34 : 64;
+  const geometry = new THREE.PlaneGeometry(radius * 2, radius * 2, segments, segments);
   const disk = new THREE.Mesh(geometry, material);
   disk.rotation.x = -Math.PI / 2;
-  disk.renderOrder = -2;
-  return tagMaterial(disk, 0.8);
+  disk.renderOrder = -4;
+  return tagMaterial(disk, diskOpacity);
+}
+
+function createDustVeil({
+  radius,
+  twist,
+  irregularity,
+  compact,
+  armProfile,
+  warpStrength = 0.018,
+  dustOpacity = 0.62
+}) {
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.DoubleSide,
+    blending: THREE.NormalBlending,
+    uniforms: {
+      opacity: { value: 0 },
+      twist: { value: twist },
+      irregularity: { value: irregularity },
+      radius: { value: radius },
+      warpStrength: { value: warpStrength },
+      warpPhase: { value: armProfile.warpPhase },
+      armWeights: { value: new THREE.Vector4(...armProfile.weights) },
+      armPhases: { value: new THREE.Vector4(...armProfile.phases) },
+      armPitch: { value: new THREE.Vector4(...armProfile.pitchScales) },
+      armSegments: { value: new THREE.Vector4(...armProfile.segmentSeeds) }
+    },
+    vertexShader: `
+      uniform float radius;
+      uniform float warpStrength;
+      uniform float warpPhase;
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        vec3 transformed = position;
+        vec2 diskPoint = (uv - 0.5) * 2.0;
+        float radial = length(diskPoint);
+        float angle = atan(diskPoint.y, diskPoint.x);
+        float outerDisk = smoothstep(0.53, 1.0, radial);
+        transformed.z += sin(angle - warpPhase)
+          * outerDisk * outerDisk
+          * radius * warpStrength
+          + radius * 0.0008;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float opacity;
+      uniform float twist;
+      uniform float irregularity;
+      uniform vec4 armWeights;
+      uniform vec4 armPhases;
+      uniform vec4 armPitch;
+      uniform vec4 armSegments;
+      varying vec2 vUv;
+
+      float hash21(vec2 point) {
+        point = fract(point * vec2(123.34, 456.21));
+        point += dot(point, point + 45.32);
+        return fract(point.x * point.y);
+      }
+
+      float noise21(vec2 point) {
+        vec2 cell = floor(point);
+        vec2 local = fract(point);
+        local = local * local * (3.0 - 2.0 * local);
+        float a = hash21(cell);
+        float b = hash21(cell + vec2(1.0, 0.0));
+        float c = hash21(cell + vec2(0.0, 1.0));
+        float d = hash21(cell + vec2(1.0, 1.0));
+        return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
+      }
+
+      float lane(
+        float angle,
+        float radial,
+        float phaseOffset,
+        float pitchScale,
+        float weight,
+        float seed
+      ) {
+        if (weight <= 0.001) return 0.0;
+        float meander = sin(radial * (8.2 + seed * 0.035) + seed) * irregularity * 0.075;
+        float laneAngle = phaseOffset + radial * twist * pitchScale + meander + 0.07 + radial * 0.065;
+        float delta = abs(atan(sin(angle - laneAngle), cos(angle - laneAngle)));
+        float width = 0.027 + radial * 0.035 + irregularity * 0.008;
+        float ridge = exp(-pow(delta / width, 1.7));
+        float fragments = noise21(vec2(radial * 14.0 + seed, angle * 1.3 + seed));
+        float rhythm = 0.5 + 0.5 * sin(radial * (13.0 + seed * 0.07) + seed);
+        return ridge * weight * smoothstep(0.27, 0.75, fragments * 0.62 + rhythm * 0.38);
+      }
+
+      void main() {
+        vec2 point = (vUv - 0.5) * 2.0;
+        float radial = length(point);
+        float angle = atan(point.y, point.x);
+        float edgeRadius = 0.94
+          + sin(angle * 3.0 + armSegments.x) * 0.035
+          + sin(angle * 5.0 - armSegments.y) * 0.018;
+        if (radial > edgeRadius) discard;
+        float edgeRadial = radial / edgeRadius;
+        float laneDensity = lane(angle, radial, armPhases.x, armPitch.x, armWeights.x, armSegments.x)
+          + lane(angle, radial, armPhases.y, armPitch.y, armWeights.y, armSegments.y)
+          + lane(angle, radial, armPhases.z, armPitch.z, armWeights.z, armSegments.z)
+          + lane(angle, radial, armPhases.w, armPitch.w, armWeights.w, armSegments.w);
+        float envelope = smoothstep(0.13, 0.25, radial) * (1.0 - smoothstep(0.76, 0.98, edgeRadial));
+        float grain = mix(0.48, 1.0, noise21(point * 22.0 + vec2(9.0, 17.0)));
+        float centralDust = exp(-radial * 7.8)
+          * smoothstep(0.46, 0.78, noise21(point * 31.0 + vec2(4.0, 12.0)));
+        float alpha = clamp(laneDensity * envelope * grain * 0.34 + centralDust * 0.11, 0.0, 0.34) * opacity;
+        if (alpha < 0.002) discard;
+        vec3 dustColor = mix(vec3(0.004, 0.005, 0.008), vec3(0.018, 0.011, 0.008), smoothstep(0.05, 0.5, radial));
+        gl_FragColor = vec4(dustColor, alpha);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `
+  });
+  material.toneMapped = true;
+  const segments = compact ? 28 : 48;
+  const geometry = new THREE.PlaneGeometry(radius * 2, radius * 2, segments, segments);
+  const dust = new THREE.Mesh(geometry, material);
+  dust.name = 'Fragmented dust lanes';
+  dust.rotation.x = -Math.PI / 2;
+  dust.renderOrder = 3;
+  return tagMaterial(dust, dustOpacity);
 }
 
 function createHaloPopulation(config, random) {
@@ -314,9 +626,9 @@ function createHaloPopulation(config, random) {
     positions,
     colors,
     sizes,
-    baseOpacity: 0.24,
-    pointScale: config.compact ? 1.32 : 1,
-    maximumSize: config.compact ? 6.2 : 8,
+    baseOpacity: 0.18,
+    pointScale: config.compact ? 1.22 : 0.94,
+    maximumSize: config.compact ? 5.4 : 6.6,
     name: `${config.name} · stellar halo and globular clusters`
   });
   halo.userData.globularClusterCount = clusterCount;
@@ -333,7 +645,8 @@ function createSpiralGalaxy(config, glowTexture) {
   const accent = new THREE.Color(config.accentColor);
   const warmDisk = new THREE.Color(config.diskColor ?? 0xe8d6c0);
   const color = new THREE.Color();
-  const armWeights = config.armWeights ?? Array.from({ length: config.arms }, (_, index) => 1 + Math.sin(index * 2.17) * 0.15);
+  const armProfile = createArmProfile(config);
+  const starFormationComplexes = createStarFormationComplexes(config, random, armProfile);
   let starFormingCount = 0;
   let thickDiskCount = 0;
   let barCount = 0;
@@ -345,6 +658,9 @@ function createSpiralGalaxy(config, glowTexture) {
     let z;
     let radialRatio;
     let isStarForming = false;
+    let localArmContrast = 1;
+    let dustTransmission = 1;
+    let outerTransmission = 1;
 
     if (isBulge) {
       radialRatio = Math.min(0.34, Math.abs(gaussian(random)) * 0.095);
@@ -362,37 +678,81 @@ function createSpiralGalaxy(config, glowTexture) {
         z = gaussian(random) * config.radius * 0.07;
       }
     } else {
-      radialRatio = 0.075 + Math.pow(random(), config.radialPower ?? 0.68) * 0.91;
+      radialRatio = sampleExponentialDisk(random, config.radialScale ?? 0.235);
       const starFormationCandidate = random() < config.starFormationRate;
-      if (starFormationCandidate && config.starFormationRing) {
-        radialRatio = clamp(config.starFormationRing + gaussian(random) * 0.095, 0.18, 0.94);
-      }
-      const radialDistance = radialRatio * config.radius * (1 + gaussian(random) * 0.018);
       const isDiskStar = random() < config.diskFraction;
       let angle;
+      let armIndex = -1;
       if (isDiskStar) {
         angle = random() * TAU;
       } else {
-        const armIndex = chooseWeighted(random, armWeights);
-        const armBase = (armIndex / config.arms) * TAU;
+        let complex = null;
+        if (starFormationCandidate && starFormationComplexes.length && random() < 0.76) {
+          complex = starFormationComplexes[Math.floor(random() * starFormationComplexes.length)];
+          armIndex = complex.armIndex;
+          radialRatio = clamp(complex.radialRatio + gaussian(random) * complex.spread, 0.12, 0.97);
+        } else {
+          armIndex = chooseWeighted(random, armProfile.sourceWeights);
+          if (starFormationCandidate && config.starFormationRing) {
+            radialRatio = clamp(config.starFormationRing + gaussian(random) * 0.085, 0.18, 0.94);
+          }
+        }
         const armWidth = config.armScatter * (0.52 + radialRatio * 0.9);
-        const branchOffset = random() < config.flocculence * 0.32
-          ? (random() > 0.5 ? 1 : -1) * (0.2 + random() * 0.34)
+        const ridgeAngle = armAngleAt(radialRatio, armIndex, config, armProfile);
+        const segmentStrength = armSegmentStrength(
+          radialRatio,
+          armIndex,
+          armProfile,
+          config.irregularity,
+          ridgeAngle
+        );
+        const branchOffset = random() < config.flocculence * (0.14 + segmentStrength * 0.3)
+          ? (random() > 0.5 ? 1 : -1) * (0.16 + radialRatio * 0.14 + random() * 0.16)
           : 0;
-        angle = armBase
-          + radialRatio * config.twist
-          + Math.sin(radialRatio * 10.0 + armIndex * 1.77) * config.irregularity * 0.22
+        const fallsInGap = random() > segmentStrength;
+        const scatterMultiplier = fallsInGap ? 3.1 : 1;
+        const scatter = gaussian(random) * armWidth * scatterMultiplier
+          + (fallsInGap ? (random() - 0.5) * 0.58 : 0);
+        angle = ridgeAngle
           + branchOffset
-          + gaussian(random) * armWidth;
+          + scatter;
+        localArmContrast = (fallsInGap ? 0.16 : 0.5) + segmentStrength * (fallsInGap ? 0.22 : 0.5);
+        const dustCenter = armWidth * (0.46 + radialRatio * 0.3);
+        const dustWidth = Math.max(0.018, armWidth * 0.22);
+        const dustDistance = Math.abs(scatter - dustCenter);
+        const dustLane = Math.exp(-(dustDistance * dustDistance) / (2 * dustWidth * dustWidth));
+        dustTransmission = 1 - dustLane * (0.38 + segmentStrength * 0.2);
+        isStarForming = starFormationCandidate && segmentStrength > 0.48;
       }
-      const asymmetry = 1 + config.asymmetry * Math.sin(angle - 0.8) * (0.3 + radialRatio * 0.7);
-      x = Math.cos(angle) * radialDistance * asymmetry;
+      const asymmetry = 1 + config.asymmetry
+        * (Math.sin(angle - 0.8) * 0.72 + Math.sin(angle * 2 + 1.3) * 0.28)
+        * (0.3 + radialRatio * 0.7);
+      const edgeDistortion = 1 + (config.edgeIrregularity ?? 0.035)
+        * Math.pow(radialRatio, 1.6)
+        * (Math.sin(angle * 3 + armProfile.warpPhase) * 0.68
+          + Math.sin(angle * 5 - armProfile.warpPhase * 0.7) * 0.32);
+      const localEdge = 0.86
+        + (0.5 + 0.5 * Math.sin(angle * 3 + armProfile.warpPhase)) * 0.075
+        + (0.5 + 0.5 * Math.sin(angle * 5 - armProfile.warpPhase * 0.7)) * 0.035;
+      outerTransmission = clamp((localEdge + 0.11 - radialRatio) / 0.11, 0.08, 1);
+      const radialDistance = radialRatio
+        * config.radius
+        * (1 + gaussian(random) * 0.021)
+        * asymmetry
+        * edgeDistortion;
+      x = Math.cos(angle) * radialDistance;
       z = Math.sin(angle) * radialDistance;
       const isThickDisk = random() < config.thickDiskFraction;
-      const verticalScale = isThickDisk ? 0.95 : 0.28;
-      y = gaussian(random) * config.thickness * verticalScale * (1 - radialRatio * 0.52);
+      const verticalScale = isThickDisk
+        ? 0.7 + radialRatio * 0.38
+        : 0.16 + radialRatio * 0.18;
+      const outerWarp = Math.pow(clamp((radialRatio - 0.54) / 0.46, 0, 1), 1.72);
+      const warp = Math.sin(angle - armProfile.warpPhase)
+        * outerWarp
+        * config.radius
+        * (config.warpStrength ?? 0.018);
+      y = gaussian(random) * config.thickness * verticalScale + warp;
       if (isThickDisk) thickDiskCount += 1;
-      isStarForming = starFormationCandidate && !isDiskStar;
     }
 
     positions[index * 3] = x;
@@ -405,28 +765,34 @@ function createSpiralGalaxy(config, glowTexture) {
       color.copy(warmDisk).lerp(arm, Math.min(1, radialRatio * 1.18));
     }
     if (isStarForming) {
-      color.lerp(random() < 0.58 ? accent : arm, 0.78);
-      sizes[index] = config.pointSize * (1.7 + random() * 2.25);
+      color.lerp(random() < 0.34 ? accent : arm, 0.46 + random() * 0.22);
+      sizes[index] = config.pointSize * (1.25 + random() * 1.7);
       starFormingCount += 1;
     } else {
-      sizes[index] = config.pointSize * (0.56 + random() * 1.05);
+      sizes[index] = config.pointSize * (0.42 + random() * 0.92);
     }
-    const brightness = isBulge ? 0.65 + random() * 0.46 : 0.42 + random() * 0.62;
+    const brightness = isBulge
+      ? 0.58 + random() * 0.36
+      : (0.34 + random() * 0.5) * localArmContrast * dustTransmission * outerTransmission;
     colors[index * 3] = color.r * brightness;
     colors[index * 3 + 1] = color.g * brightness;
     colors[index * 3 + 2] = color.b * brightness;
   }
 
-  const disk = createLuminousDisk({ ...config, compact: config.compact });
+  const disk = createLuminousDisk({ ...config, compact: config.compact, armProfile });
   const stars = createPointCloud({
     positions,
     colors,
     sizes,
-    baseOpacity: 0.94,
-    pointScale: config.compact ? 1.48 : 1.16,
-    maximumSize: config.compact ? 7.2 : 9.5,
+    baseOpacity: config.starOpacity ?? 0.82,
+    pointScale: (config.compact ? 1.3 : 1.05) * (config.pointScaleBoost ?? 1),
+    maximumSize: (config.compact ? 6.2 : 7.1) * Math.min(config.pointScaleBoost ?? 1, 1.12),
     name: `${config.name} · thin disk, thick disk and star-forming regions`
   });
+  stars.renderOrder = -2;
+  const dust = config.includeDust === false
+    ? null
+    : createDustVeil({ ...config, compact: config.compact, armProfile });
   const halo = config.includeHalo === false ? null : createHaloPopulation(config, random);
 
   const glowMaterial = new THREE.SpriteMaterial({
@@ -436,18 +802,20 @@ function createSpiralGalaxy(config, glowTexture) {
     opacity: 0,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
-    toneMapped: false
+    toneMapped: true
   });
-  const glow = config.includeGlow === false ? null : tagMaterial(new THREE.Sprite(glowMaterial), 0.34);
-  if (glow) glow.scale.set(config.radius * 0.68, config.radius * 0.38, 1);
+  const glow = config.includeGlow === false ? null : tagMaterial(new THREE.Sprite(glowMaterial), config.glowOpacity ?? 0.19);
+  if (glow) glow.scale.set(config.radius * 0.48, config.radius * 0.28, 1);
 
   const group = new THREE.Group();
   group.name = config.name;
   group.add(disk, stars);
+  if (dust) group.add(dust);
   if (halo) group.add(halo);
   if (glow) group.add(glow);
   group.userData.disk = disk;
   group.userData.stars = stars;
+  group.userData.dust = dust;
   group.userData.glow = glow;
   group.userData.halo = halo;
   group.userData.starFormingRegions = stars;
@@ -456,6 +824,9 @@ function createSpiralGalaxy(config, glowTexture) {
     barStars: barCount,
     thickDiskStars: thickDiskCount,
     starFormingRegions: starFormingCount,
+    starFormingComplexes: starFormationComplexes.length,
+    warpedOuterDisk: true,
+    dustLanePass: Boolean(dust),
     globularClusters: halo?.userData.globularClusterCount ?? 0
   };
   return group;
@@ -529,7 +900,7 @@ function createDwarfGalaxy(spec, compact, glowTexture) {
     positions[index * 3 + 2] = z;
     color.copy(oldColor);
     if (young) color.lerp(random() < 0.58 ? youngColor : warmColor, 0.78);
-    const surfaceBrightness = morphology === 'ultra-diffuse' ? 0.48 : 0.68;
+    const surfaceBrightness = morphology === 'ultra-diffuse' ? 0.52 : 0.74;
     const brightness = surfaceBrightness * (0.56 + random() * 0.66);
     colors[index * 3] = color.r * brightness;
     colors[index * 3 + 1] = color.g * brightness;
@@ -541,9 +912,9 @@ function createDwarfGalaxy(spec, compact, glowTexture) {
     positions,
     colors,
     sizes,
-    baseOpacity: morphology === 'ultra-diffuse' ? 0.38 : 0.66,
-    pointScale: compact ? 1.52 : 1.18,
-    maximumSize: compact ? 6.2 : 7.6,
+    baseOpacity: morphology === 'ultra-diffuse' ? 0.43 : 0.75,
+    pointScale: compact ? 1.6 : 1.27,
+    maximumSize: compact ? 6.5 : 8,
     name: `${spec.name} · ${morphology}`
   });
   const group = new THREE.Group();
@@ -559,7 +930,7 @@ function createDwarfGalaxy(spec, compact, glowTexture) {
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       toneMapped: false
-    })), morphology === 'ultra-diffuse' ? 0.17 : 0.32);
+    })), morphology === 'ultra-diffuse' ? 0.19 : 0.35);
     glow.scale.set(spec.radius * 2.3, spec.radius * 1.16, 1);
     group.add(glow);
   }
@@ -576,6 +947,7 @@ function createDistantGalaxyField(compact, seed) {
   const aspects = new Float32Array(count);
   const morphologies = new Float32Array(count);
   const alphas = new Float32Array(count);
+  const seeds = new Float32Array(count);
   const warm = new THREE.Color(0xe9c6a5);
   const neutral = new THREE.Color(0xb9c7dc);
   const blue = new THREE.Color(0x86abd9);
@@ -591,14 +963,15 @@ function createDistantGalaxyField(compact, seed) {
     const kind = random();
     morphologies[index] = kind;
     color.copy(kind < 0.34 ? warm : kind < 0.78 ? neutral : blue);
-    color.multiplyScalar(0.56 + random() * 0.46);
+    color.multiplyScalar(0.53 + random() * 0.4);
     colors[index * 3] = color.r;
     colors[index * 3 + 1] = color.g;
     colors[index * 3 + 2] = color.b;
-    sizes[index] = compact ? 8 + random() * 17 : 9 + random() * 22;
+    sizes[index] = compact ? 8.8 + random() * 18.2 : 9.8 + random() * 23.8;
     angles[index] = random() * TAU;
     aspects[index] = kind < 0.34 ? 1.1 + random() * 1.2 : 1.5 + random() * 2.6;
-    alphas[index] = 0.34 + random() * 0.62;
+    alphas[index] = 0.3 + random() * 0.55;
+    seeds[index] = random();
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -609,16 +982,17 @@ function createDistantGalaxyField(compact, seed) {
   geometry.setAttribute('aAspect', new THREE.BufferAttribute(aspects, 1));
   geometry.setAttribute('aMorphology', new THREE.BufferAttribute(morphologies, 1));
   geometry.setAttribute('aAlpha', new THREE.BufferAttribute(alphas, 1));
+  geometry.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
   geometry.computeBoundingSphere();
 
   const material = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
     vertexColors: true,
     uniforms: {
       opacity: { value: 0 },
-      compactBoost: { value: compact ? 1.22 : 1 }
+      compactBoost: { value: compact ? 1.25 : 1.08 }
     },
     vertexShader: `
       attribute float aSize;
@@ -626,20 +1000,23 @@ function createDistantGalaxyField(compact, seed) {
       attribute float aAspect;
       attribute float aMorphology;
       attribute float aAlpha;
+      attribute float aSeed;
       uniform float compactBoost;
       varying vec3 vColor;
       varying float vAngle;
       varying float vAspect;
       varying float vMorphology;
       varying float vAlpha;
+      varying float vSeed;
       void main() {
         vColor = color;
         vAngle = aAngle;
         vAspect = aAspect;
         vMorphology = aMorphology;
         vAlpha = aAlpha;
+        vSeed = aSeed;
         vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = clamp(aSize * compactBoost * (850.0 / max(500.0, -viewPosition.z)), 2.0, 17.0);
+        gl_PointSize = clamp(aSize * compactBoost * (980.0 / max(500.0, -viewPosition.z)), 2.3, 18.5);
         gl_Position = projectionMatrix * viewPosition;
       }
     `,
@@ -650,30 +1027,46 @@ function createDistantGalaxyField(compact, seed) {
       varying float vAspect;
       varying float vMorphology;
       varying float vAlpha;
+      varying float vSeed;
       void main() {
         vec2 point = gl_PointCoord - 0.5;
         float cosine = cos(vAngle);
         float sine = sin(vAngle);
         point = mat2(cosine, -sine, sine, cosine) * point;
         point.y *= vAspect;
-        float radial = length(point) * 2.0;
+        float angle = atan(point.y, point.x);
+        float lopsided = 1.0 + sin(angle + vSeed * 17.0) * 0.075;
+        float radial = length(point) * 2.0 * lopsided;
         if (radial > 1.0) discard;
-        float profile = exp(-radial * (vMorphology < 0.34 ? 4.6 : 3.2));
-        float armHint = 0.72 + 0.28 * cos(atan(point.y, point.x) * 2.0 - radial * 7.0);
-        float spiralMix = smoothstep(0.34, 0.72, vMorphology);
-        profile *= mix(1.0, armHint, spiralMix * 0.55);
-        float core = exp(-radial * 12.0);
+        float elliptical = exp(-pow(radial, 0.68) * 5.1);
+        float disk = exp(-radial * 3.7);
+        float armHint = 0.76 + 0.24 * cos(angle * (2.0 + step(0.58, vSeed)) - radial * (6.4 + vSeed * 2.3) + vSeed * 12.0);
+        float dustLane = exp(-pow(abs(point.y) * (11.0 + vSeed * 7.0), 1.35));
+        float spiral = disk * armHint * (1.0 - dustLane * smoothstep(2.1, 3.7, vAspect) * 0.55);
+        vec2 clumpA = point - vec2(sin(vSeed * 11.0), cos(vSeed * 7.0)) * 0.09;
+        vec2 clumpB = point + vec2(cos(vSeed * 13.0), sin(vSeed * 9.0)) * 0.14;
+        float irregular = exp(-length(clumpA) * 6.0) * 0.62 + exp(-length(clumpB) * 8.5) * 0.48;
+        float ellipticalMix = 1.0 - smoothstep(0.29, 0.38, vMorphology);
+        float irregularMix = smoothstep(0.79, 0.92, vMorphology);
+        float profile = mix(spiral, elliptical, ellipticalMix);
+        profile = mix(profile, irregular, irregularMix);
+        float grain = 0.86 + 0.14 * sin((point.x * 83.0 + point.y * 59.0 + vSeed * 31.0));
+        profile *= grain;
+        float core = exp(-radial * (10.0 + vSeed * 5.0));
         float edge = 1.0 - smoothstep(0.72, 1.0, radial);
-        gl_FragColor = vec4(vColor + core * vec3(0.16, 0.12, 0.08), (profile + core * 0.36) * edge * vAlpha * opacity);
+        vec3 radiance = vColor * (0.82 + profile * 0.2) + core * vec3(0.055, 0.043, 0.032);
+        gl_FragColor = vec4(radiance, (profile + core * 0.24) * edge * vAlpha * opacity);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }
     `
   });
-  material.toneMapped = false;
+  material.toneMapped = true;
   const field = new THREE.Points(geometry, material);
   field.name = 'Deep galaxy field · mixed morphology';
   field.frustumCulled = false;
   field.userData.galaxyCount = count;
-  return tagMaterial(field, 0.66);
+  return tagMaterial(field, 0.75);
 }
 
 function setOpacity(group, opacity) {
@@ -714,28 +1107,35 @@ export function createCosmicEnvironment(compact = false) {
   const milkyWay = createSpiralGalaxy({
     name: 'Milky Way',
     count: compact ? 18000 : 68000,
-    radius: 118,
-    thickness: 5.6,
+    radius: 130,
+    thickness: 6,
     arms: 4,
-    armWeights: [1, 0.76, 0.92, 0.64],
+    armWeights: [1, 0.42, 0.78, 0.32],
     twist: 5.05,
     seed: 412198,
-    coreColor: 0xffb66f,
-    diskColor: 0xe7d1bc,
-    armColor: 0x7ea6dd,
-    accentColor: 0xdf7dae,
+    coreColor: 0xf1c28f,
+    diskColor: 0xd8cbb9,
+    armColor: 0x91a6c1,
+    accentColor: 0xc39aaa,
     haloColor: 0x8d9db8,
     clusterColor: 0xffd091,
     pointSize: compact ? 1.02 : 0.88,
     barStrength: 0.86,
-    bulgeFraction: 0.185,
-    diskFraction: 0.25,
-    thickDiskFraction: 0.15,
-    starFormationRate: 0.105,
-    armScatter: 0.115,
-    irregularity: 0.58,
-    flocculence: 0.35,
-    asymmetry: 0.07,
+    bulgeFraction: 0.135,
+    diskFraction: 0.46,
+    thickDiskFraction: 0.14,
+    starFormationRate: 0.084,
+    armScatter: 0.108,
+    irregularity: 0.72,
+    flocculence: 0.52,
+    asymmetry: 0.11,
+    armPhaseJitter: 0.13,
+    warpStrength: 0.027,
+    edgeIrregularity: 0.05,
+    diskOpacity: 0.7,
+    starOpacity: 0.8,
+    glowOpacity: 0.16,
+    pointScaleBoost: 1.08,
     compact,
     includeHalo: true,
     includeGlow: true
@@ -745,31 +1145,39 @@ export function createCosmicEnvironment(compact = false) {
   const andromeda = createSpiralGalaxy({
     name: 'Andromeda Galaxy',
     count: compact ? 8200 : 36000,
-    radius: 96,
+    radius: 100,
     thickness: 4.6,
     arms: 2,
-    armWeights: [1, 0.86],
+    armWeights: [1, 0.66],
     twist: 3.72,
     seed: 773901,
-    coreColor: 0xffddb4,
-    diskColor: 0xe3d2c5,
-    armColor: 0x9aafd3,
-    accentColor: 0xc8a1c6,
+    coreColor: 0xf1d1ad,
+    diskColor: 0xd8cec2,
+    armColor: 0xa5afc0,
+    accentColor: 0xb8a5b3,
     haloColor: 0x9ca7b8,
     clusterColor: 0xffd6a8,
     pointSize: compact ? 0.98 : 0.82,
     barStrength: 0.22,
-    bulgeFraction: 0.27,
-    diskFraction: 0.36,
+    bulgeFraction: 0.215,
+    diskFraction: 0.54,
     thickDiskFraction: 0.18,
-    starFormationRate: 0.072,
+    starFormationRate: 0.058,
     starFormationRing: 0.58,
     armScatter: 0.19,
-    irregularity: 0.26,
+    irregularity: 0.31,
     flocculence: 0.12,
-    asymmetry: 0.08,
+    asymmetry: 0.065,
+    armPhaseJitter: 0.055,
+    warpStrength: 0.014,
+    edgeIrregularity: 0.026,
+    diskOpacity: 0.64,
+    starOpacity: 0.78,
+    glowOpacity: 0.16,
+    pointScaleBoost: 1.1,
     compact,
     includeHalo: !compact,
+    includeDust: !compact,
     includeGlow: true
   }, glowTexture);
   andromeda.position.set(330, 64, -175);
@@ -778,30 +1186,38 @@ export function createCosmicEnvironment(compact = false) {
   const triangulum = createSpiralGalaxy({
     name: 'Triangulum Galaxy',
     count: compact ? 3900 : 16500,
-    radius: 42,
+    radius: 45,
     thickness: 2.9,
     arms: 3,
-    armWeights: [1, 0.72, 0.52],
+    armWeights: [1, 0.56, 0.34],
     twist: 5.35,
     seed: 193381,
-    coreColor: 0xffd4a6,
-    diskColor: 0xd8d1c5,
-    armColor: 0x78aee6,
-    accentColor: 0xf08fbd,
+    coreColor: 0xe9c9a2,
+    diskColor: 0xcfcbc2,
+    armColor: 0x8ea9c4,
+    accentColor: 0xc493a7,
     haloColor: 0x8699b4,
     clusterColor: 0xf6c994,
     pointSize: compact ? 0.91 : 0.72,
     barStrength: 0.035,
-    bulgeFraction: 0.075,
-    diskFraction: 0.24,
+    bulgeFraction: 0.055,
+    diskFraction: 0.4,
     thickDiskFraction: 0.11,
-    starFormationRate: 0.16,
+    starFormationRate: 0.128,
     armScatter: 0.27,
-    irregularity: 0.9,
+    irregularity: 1.04,
     flocculence: 0.92,
-    asymmetry: 0.2,
+    asymmetry: 0.23,
+    armPhaseJitter: 0.2,
+    warpStrength: 0.032,
+    edgeIrregularity: 0.065,
+    diskOpacity: 0.61,
+    starOpacity: 0.8,
+    glowOpacity: 0.14,
+    pointScaleBoost: 1.12,
     compact,
     includeHalo: false,
+    includeDust: !compact,
     includeGlow: !compact
   }, glowTexture);
   triangulum.position.set(-220, 32, 170);
@@ -897,6 +1313,7 @@ export function createCosmicEnvironment(compact = false) {
     toneMapped: false
   })), 0.88);
   solarMarker.name = 'Solar position · Orion Spur';
+  solarMarker.renderOrder = 10;
   solarMarker.scale.set(4.8, 4.8, 1);
   solarMarker.position.set(38, 0.5, 49);
   milkyWay.add(solarMarker);

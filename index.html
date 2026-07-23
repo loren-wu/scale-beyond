@@ -6,10 +6,11 @@
   <meta name="description" content="《尺度之外》：从地球昼夜、月球与太阳系，连续缩放至银河系和本星系群的沉浸式 3D 宇宙尺度体验。" />
   <title>尺度之外 | Earth to the Local Group</title>
   <link rel="icon" href="data:," />
-  <link rel="preload" href="assets/nasa/earth-blue-marble-2048.jpg" as="image" />
+  <link rel="preload" href="assets/nasa/earth-blue-marble-5400.jpg" as="image" media="(min-width: 760px)" />
+  <link rel="preload" href="assets/nasa/earth-blue-marble-2048.jpg" as="image" media="(max-width: 759px)" />
   <link rel="preload" href="assets/nasa/earth-black-marble-3600.jpg" as="image" />
   <link rel="preload" href="assets/cosmic/milky-way-sky-band-v1.jpg" as="image" />
-  <link rel="stylesheet" href="style.css?v=scale-cosmic5" />
+  <link rel="stylesheet" href="style.css?v=scale-cosmic6" />
   <script type="importmap">
     {
       "imports": {
@@ -17,7 +18,7 @@
       }
     }
   </script>
-  <script type="module" src="main.js?v=scale-cosmic5"></script>
+  <script type="module" src="main.js?v=scale-cosmic6"></script>
 </head>
 <body>
   <main class="experience" aria-label="尺度之外 3D 宇宙尺度探索" aria-describedby="keyboardHelp">
@@ -33,6 +34,7 @@
       <p id="layerName">01 · NEAR-EARTH ORBIT</p>
       <strong id="scaleUnit">120–2,000 KM ABOVE EARTH</strong>
       <span id="distanceValue">距地表 · 420 KM</span>
+      <small id="earthRealtimeStatus" class="earth-realtime-status" role="status" aria-live="polite" aria-atomic="true">实时昼夜 · NASA GIBS 卫星影像准备中</small>
     </section>
 
     <section class="caption">

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 const DEFAULT_TEXTURE = 'assets/cosmic/milky-way-sky-band-v1.jpg';
+const NASA_STRUCTURE_TEXTURE = 'assets/nasa/milky-way-glimpse360-4096.webp';
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -59,7 +60,9 @@ export function createSkyBand({
   );
 
   let texture = createPlaceholderTexture();
+  let dataTexture = createPlaceholderTexture();
   let loaded = false;
+  let dataLoaded = false;
   let disposed = false;
   let elapsed = 0;
   let masterOpacity = 0.86;
@@ -68,6 +71,8 @@ export function createSkyBand({
 
   const uniforms = {
     map: { value: texture },
+    dataMap: { value: dataTexture },
+    dataMix: { value: 0 },
     opacity: { value: 0 },
     time: { value: 0 },
     viewportAspect: { value: viewportAspect },
@@ -95,6 +100,8 @@ export function createSkyBand({
     `,
     fragmentShader: `
       uniform sampler2D map;
+      uniform sampler2D dataMap;
+      uniform float dataMix;
       uniform float opacity;
       uniform float time;
       uniform float viewportAspect;
@@ -149,6 +156,15 @@ export function createSkyBand({
           clamp(0.5 + localY * 0.34, 0.003, 0.997)
         );
         vec4 texel = texture2D(map, sampleUv);
+        vec3 upperSample = texture2D(map, vec2(sampleUv.x, clamp(sampleUv.y + 0.014, 0.003, 0.997))).rgb;
+        vec3 lowerSample = texture2D(map, vec2(sampleUv.x, clamp(sampleUv.y - 0.014, 0.003, 0.997))).rgb;
+        vec3 dataSample = vec3(0.0);
+        if (detail > 0.5 && dataMix > 0.001) {
+          dataSample = texture2D(
+            dataMap,
+            vec2(fract(x + 0.17), clamp(0.5 + localY * 0.39, 0.01, 0.99))
+          ).rgb;
+        }
 
         float edgeNoise = cloudNoise(vec2(x * 9.0 + 21.0, localY * 2.5 + 8.0));
         float irregularEdge = abs(localY) + (edgeNoise - 0.5) * 0.14;
@@ -158,8 +174,12 @@ export function createSkyBand({
         float feather = bandFeather * horizontalFeather;
 
         float luminance = dot(texel.rgb, vec3(0.2126, 0.7152, 0.0722));
-        float structure = smoothstep(0.009, 0.265, luminance);
-        float dimCloud = smoothstep(0.012, 0.105, luminance) * 0.24;
+        float localMean = dot((upperSample + lowerSample) * 0.5, vec3(0.2126, 0.7152, 0.0722));
+        float localContrast = clamp(0.5 + (luminance - localMean) * 4.2, 0.0, 1.0);
+        float structure = smoothstep(0.009, 0.29, luminance) * mix(0.8, 1.05, localContrast);
+        float dimCloud = smoothstep(0.01, 0.105, luminance) * 0.2;
+        float dataLuminance = dot(dataSample, vec3(0.299, 0.587, 0.114));
+        float dataSignal = smoothstep(0.018, 0.31, dataLuminance) * dataMix;
 
         // A wandering primary rift plus broken secondary filaments create the
         // recognizable dark river through the Milky Way without a hard stripe.
@@ -175,7 +195,16 @@ export function createSkyBand({
           * smoothstep(0.43, 0.72, dustField);
         float lowerFilament = (1.0 - smoothstep(0.02, 0.065, abs(localY - lowerFilamentCenter)))
           * smoothstep(0.5, 0.78, 1.0 - dustField);
-        float dust = clamp(mainRift * 0.88 + upperFilament * 0.34 + lowerFilament * 0.28, 0.0, 0.92);
+        float photographedDust = smoothstep(0.035, 0.18, localMean)
+          * (1.0 - smoothstep(0.018, 0.13, luminance));
+        float dust = clamp(
+          mainRift * 0.7
+            + upperFilament * 0.25
+            + lowerFilament * 0.21
+            + photographedDust * 0.78,
+          0.0,
+          0.94
+        );
 
         // Warm stellar core, cooler outer clouds and a restrained violet-blue
         // transition mirror the visible-light palette without flattening it.
@@ -183,19 +212,29 @@ export function createSkyBand({
         float coreY = exp(-pow(localY / 0.62, 2.0));
         float warmCore = coreX * coreY;
         float coolCloud = (1.0 - coreX * 0.72) * smoothstep(0.035, 0.3, luminance);
-        vec3 coolGrade = vec3(0.72, 0.91, 1.2);
-        vec3 warmGrade = vec3(1.2, 0.89, 0.64);
-        vec3 grade = mix(vec3(0.9, 0.98, 1.06), coolGrade, coolCloud * 0.48);
-        grade = mix(grade, warmGrade, warmCore * 0.72);
-        vec3 color = pow(max(texel.rgb, vec3(0.0)), vec3(0.8)) * grade * 1.22;
+        vec3 coolGrade = vec3(0.88, 0.96, 1.08);
+        vec3 warmGrade = vec3(1.08, 0.97, 0.83);
+        vec3 grade = mix(vec3(0.96, 0.99, 1.02), coolGrade, coolCloud * 0.3);
+        grade = mix(grade, warmGrade, warmCore * 0.46);
+        vec3 sourceColor = pow(max(texel.rgb, vec3(0.0)), vec3(0.88));
+        float sourceGray = dot(sourceColor, vec3(0.2126, 0.7152, 0.0722));
+        sourceColor = mix(vec3(sourceGray), sourceColor, 0.8);
+        vec3 color = sourceColor * grade * 1.08;
+
+        // GLIMPSE 360 is infrared survey data. It is used only as a faint
+        // structural modulation, converted to a restrained continuum rather
+        // than displayed in its scientific false-colour palette.
+        vec3 dataGrade = mix(vec3(0.66, 0.73, 0.84), vec3(0.86, 0.73, 0.6), warmCore);
+        color *= 1.0 + dataSignal * (dataLuminance - 0.16) * 0.16;
+        color += dataGrade * dataSignal * dataLuminance * 0.11;
 
         float blueNebula = smoothstep(0.54, 0.83, cloudNoise(vec2(x * 7.0 + 41.0, localY * 4.0)))
           * coolCloud * structure;
         float amberNebula = smoothstep(0.58, 0.84, cloudNoise(vec2(x * 9.0 + 7.0, localY * 3.4 + 9.0)))
           * warmCore * structure;
-        color += vec3(0.1, 0.22, 0.46) * blueNebula * 0.24;
-        color += vec3(0.5, 0.19, 0.045) * amberNebula * 0.22;
-        color *= 1.0 - dust * 0.7;
+        color += vec3(0.08, 0.14, 0.25) * blueNebula * 0.1;
+        color += vec3(0.24, 0.12, 0.045) * amberNebula * 0.09;
+        color *= 1.0 - dust * 0.76;
 
         // Sparse circular specks, not whole bright grid cells. Compact mode uses
         // fewer candidates and skips the finest cloud-noise octave above.
@@ -204,17 +243,18 @@ export function createSkyBand({
         vec2 starGrid = floor(starPosition);
         vec2 starLocal = fract(starPosition) - 0.5;
         float starSeed = hash21(starGrid);
-        float starCandidate = smoothstep(mix(0.9975, 0.9962, detail), 1.0, starSeed);
-        float starShape = 1.0 - smoothstep(0.035, 0.2, length(starLocal));
-        float twinkle = 0.82 + 0.18 * sin(time * 0.36 + starSeed * 35.0);
+        float starCandidate = smoothstep(mix(0.99915, 0.99855, detail), 1.0, starSeed);
+        float starShape = 1.0 - smoothstep(0.025, 0.14, length(starLocal));
+        float twinkle = 0.9 + 0.1 * sin(time * 0.27 + starSeed * 35.0);
         float star = starCandidate * starShape * twinkle
           * mix(0.78, 1.0, clamp(viewportAspect, 0.45, 1.0));
         vec3 starColor = mix(vec3(0.7, 0.82, 1.0), vec3(1.0, 0.83, 0.62), hash21(starGrid + 9.3));
-        color += starColor * star * 0.68;
+        color += starColor * star * 0.24;
 
-        float cloudAlpha = structure * 0.72 + dimCloud;
-        float alpha = (cloudAlpha * (1.0 - dust * 0.2) + star * 0.48) * feather * opacity;
-        color = min(color, vec3(1.28));
+        float cloudAlpha = structure * 0.7 + dimCloud + dataSignal * dataLuminance * 0.06;
+        float dustBody = dust * smoothstep(0.025, 0.15, localMean) * 0.11;
+        float alpha = (cloudAlpha * (1.0 - dust * 0.12) + dustBody + star * 0.28) * feather * opacity;
+        color = min(color, vec3(1.12));
 
         if (alpha < 0.001) discard;
         gl_FragColor = vec4(color, alpha);
@@ -256,6 +296,37 @@ export function createSkyBand({
       if (!disposed && typeof onError === 'function') onError(error);
     }
   );
+
+  // A very low-weight infrared layer contributes real survey structure while
+  // the visible-light panorama remains the authored appearance and fallback.
+  if (!compact) {
+    loader.load(
+      NASA_STRUCTURE_TEXTURE,
+      (nextTexture) => {
+        if (disposed) {
+          nextTexture.dispose();
+          return;
+        }
+        nextTexture.colorSpace = THREE.SRGBColorSpace;
+        nextTexture.wrapS = THREE.ClampToEdgeWrapping;
+        nextTexture.wrapT = THREE.ClampToEdgeWrapping;
+        nextTexture.minFilter = THREE.LinearMipmapLinearFilter;
+        nextTexture.magFilter = THREE.LinearFilter;
+        nextTexture.anisotropy = Math.max(1, Math.min(anisotropy, 4));
+        dataTexture.dispose();
+        dataTexture = nextTexture;
+        uniforms.dataMap.value = dataTexture;
+        uniforms.dataMix.value = 0.085;
+        dataLoaded = true;
+        mesh.userData.nasaStructureLoaded = true;
+      },
+      undefined,
+      () => {
+        // Deliberately silent: the visible-light panorama and procedural dust
+        // field remain a complete fallback when the optional survey layer fails.
+      }
+    );
+  }
 
   function resize(width = window.innerWidth, heightValue = window.innerHeight) {
     viewportAspect = width / Math.max(heightValue, 1);
@@ -301,6 +372,7 @@ export function createSkyBand({
     geometry.dispose();
     material.dispose();
     texture.dispose();
+    dataTexture.dispose();
   }
 
   resize();
@@ -322,6 +394,9 @@ export function createSkyBand({
     },
     get loaded() {
       return loaded;
+    },
+    get dataLoaded() {
+      return dataLoaded;
     }
   };
 }

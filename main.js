@@ -1,13 +1,12 @@
 import * as THREE from 'three';
-import { createPlanetTexture, createRingMaterial, createSunTexture } from './src/planet-textures.js';
-import { createCosmicEnvironment } from './src/galaxy.js';
-import { createSkyBand } from './src/sky-band.js';
-import { createCosmicControls } from './src/controls.js';
+import { createPlanetTexture, createRingMaterial, createSunTexture } from './src/planet-textures.js?v=scale-cosmic6';
+import { createCosmicEnvironment } from './src/galaxy.js?v=scale-cosmic6';
+import { createSkyBand } from './src/sky-band.js?v=scale-cosmic6';
+import { createCosmicControls } from './src/controls.js?v=scale-cosmic6';
+import { createLiveEarthController, LIVE_EARTH_SHADER_CHUNK } from './src/live-earth.js?v=scale-cosmic6';
 
 const container = document.getElementById('scene');
 const experience = document.querySelector('.experience');
-const scaleReadoutPanel = document.querySelector('.scale-readout');
-const captionPanel = document.querySelector('.caption');
 const layerName = document.getElementById('layerName');
 const scaleUnit = document.getElementById('scaleUnit');
 const captionZh = document.getElementById('captionZh');
@@ -19,6 +18,7 @@ const hint = document.getElementById('hint');
 const scaleBar = document.getElementById('scaleBar');
 const distanceValue = document.getElementById('distanceValue');
 const assetStatus = document.getElementById('assetStatus');
+const earthRealtimeStatus = document.getElementById('earthRealtimeStatus');
 const locationMarker = document.getElementById('locationMarker');
 
 const EARTH_RADIUS = 8;
@@ -28,10 +28,16 @@ const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 let reduceMotion = motionQuery.matches;
 
 const TEXTURE_SOURCES = {
-  earth: [
-    'assets/nasa/earth-blue-marble-2048.jpg',
-    'https://assets.science.nasa.gov/dynamicimage/assets/science/esd/eo/images/bmng/bmng-topography-bathymetry/january/world.topo.bathy.200401.3x5400x2700.jpg?w=2048&h=1024&fit=crop&crop=faces%2Cfocalpoint'
-  ],
+  earth: compactMode
+    ? [
+        'assets/nasa/earth-blue-marble-2048.jpg',
+        'https://assets.science.nasa.gov/dynamicimage/assets/science/esd/eo/images/bmng/bmng-topography-bathymetry/january/world.topo.bathy.200401.3x5400x2700.jpg?w=2048&h=1024&fit=clip&crop=faces%2Cfocalpoint'
+      ]
+    : [
+        'assets/nasa/earth-blue-marble-5400.jpg',
+        'assets/nasa/earth-blue-marble-2048.jpg',
+        'https://assets.science.nasa.gov/dynamicimage/assets/science/esd/eo/images/bmng/bmng-topography-bathymetry/january/world.topo.bathy.200401.3x5400x2700.jpg?w=5400&h=2700&fit=clip&crop=faces%2Cfocalpoint'
+      ],
   clouds: [
     'assets/nasa/earth-clouds-2048.jpg',
     'https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57747/cloud_combined_2048.jpg'
@@ -63,6 +69,7 @@ const textureState = {
 const state = {
   scale: 18,
   targetScale: 18,
+  zoomVelocity: 0,
   orbitYaw: 0,
   orbitPitch: 0,
   interacted: false
@@ -125,6 +132,50 @@ const aurora = createAurora();
 const moonSystem = createMoonSystem();
 planetGroup.add(earth, clouds, atmosphere, aurora, moonSystem.root);
 
+let liveEarthMixTarget = 0;
+let liveEarthSnapshot = null;
+const liveEarthController = createLiveEarthController({
+  renderer,
+  compact: compactMode,
+  quality: compactMode ? 'constrained' : 'auto',
+  earthObject: earth,
+  sunLight,
+  sunDirectionTargets: [
+    sunDirection,
+    earth.material.uniforms.sunDirection,
+    atmosphere.material.uniforms.sunDirection,
+    aurora.material.uniforms.sunDirection
+  ],
+  applyTexture(texture) {
+    earth.material.uniforms.liveMap.value = texture;
+    liveEarthMixTarget = compactMode ? 0.38 : 0.52;
+    return true;
+  }
+});
+liveEarthController.subscribe((snapshot) => {
+  liveEarthSnapshot = snapshot;
+  if (!earthRealtimeStatus) return;
+  earthRealtimeStatus.dataset.state = snapshot.phase;
+  if (snapshot.phase === 'ready' || snapshot.phase === 'stale') {
+    const availability = snapshot.phase === 'stale' ? '最近可用卫星影像' : '近实时卫星影像';
+    earthRealtimeStatus.textContent = `实时昼夜 · NASA GIBS ${availability} · ${snapshot.date} UTC`;
+  } else if (snapshot.phase === 'loading') {
+    earthRealtimeStatus.textContent = '实时昼夜 · NASA GIBS 卫星影像匹配中';
+  } else {
+    earthRealtimeStatus.textContent = `实时昼夜 · STATIC BLUE MARBLE ${compactMode ? '2048PX' : '5400PX'}`;
+    if (snapshot.phase === 'fallback') liveEarthMixTarget = 0;
+  }
+});
+liveEarthController.start();
+
+// Begin near the real subsolar hemisphere instead of leaving the first frame
+// at an arbitrary longitude. The offset keeps a readable terminator in view.
+const initialSolarDirection = liveEarthController.getSolarFrame().localDirection;
+const initialSolarBearing = Math.atan2(initialSolarDirection.x, initialSolarDirection.z);
+const earthPresentationRotation = -0.28 - initialSolarBearing - 0.72;
+earth.rotation.y = earthPresentationRotation;
+clouds.rotation.y = earthPresentationRotation + 0.018;
+
 const starField = createStarField();
 const galaxyGlow = createGalaxyGlow();
 const deepSpaceVeil = createDeepSpaceVeil();
@@ -156,8 +207,8 @@ const controls = createCosmicControls({
   motionQuery,
   dragSensitivity: compactMode ? 0.0029 : 0.0027,
   touchDragMultiplier: 1.04,
-  zoomDamping: 10.2,
-  zoomResponse: 10.5,
+  zoomDamping: 12,
+  zoomResponse: 11.2,
   orbitDamping: 7.2,
   onInteract: markInteracted,
   onDragChange: (active) => document.body.classList.toggle('is-dragging', active),
@@ -174,6 +225,15 @@ const targetLookAt = new THREE.Vector3();
 const currentLookAt = new THREE.Vector3();
 const targetPosition = new THREE.Vector3();
 const currentPosition = new THREE.Vector3().copy(camera.position);
+const cameraSolarCenter = new THREE.Vector3();
+const cameraGalaxyCenter = new THREE.Vector3(0, 0, -60);
+const cameraLocalCenter = new THREE.Vector3(20, -18, -78);
+const transitionRig = {
+  scale: state.scale,
+  velocity: 0,
+  motion: 0,
+  direction: 0
+};
 
 let galaxyOpacity = 0;
 let localGroupOpacity = 0;
@@ -250,6 +310,15 @@ function mix(a, b, amount) {
 function smoothstep(edge0, edge1, value) {
   const normalized = clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return normalized * normalized * (3 - 2 * normalized);
+}
+
+function smootherstep(edge0, edge1, value) {
+  const normalized = clamp((value - edge0) / Math.max(edge1 - edge0, 0.0001), 0, 1);
+  return normalized * normalized * normalized * (normalized * (normalized * 6 - 15) + 10);
+}
+
+function damp(value, target, response, delta) {
+  return mix(value, target, 1 - Math.exp(-response * delta));
 }
 
 function seededRandom(seed) {
@@ -426,8 +495,12 @@ function createEarth() {
     transparent: true,
     uniforms: {
       dayMap: { value: dayTexture },
+      liveMap: { value: dayTexture },
       nightMap: { value: nightTexture },
       sunDirection: { value: sunDirection.clone() },
+      dayTexelSize: { value: new THREE.Vector2(1 / dayTexture.image.width, 1 / dayTexture.image.height) },
+      liveMix: { value: 0 },
+      surfaceDetail: { value: compactMode ? 0.24 : 0.7 },
       opacity: { value: 1 }
     },
     vertexShader: `
@@ -445,12 +518,18 @@ function createEarth() {
     `,
     fragmentShader: `
       uniform sampler2D dayMap;
+      uniform sampler2D liveMap;
       uniform sampler2D nightMap;
       uniform vec3 sunDirection;
+      uniform vec2 dayTexelSize;
+      uniform float liveMix;
+      uniform float surfaceDetail;
       uniform float opacity;
       varying vec2 vUv;
       varying vec3 vViewNormal;
       varying vec3 vViewPosition;
+
+      ${LIVE_EARTH_SHADER_CHUNK}
 
       void main() {
         vec3 normal = normalize(vViewNormal);
@@ -458,20 +537,29 @@ function createEarth() {
         vec3 viewDirection = normalize(-vViewPosition);
         float sunAmount = dot(normal, lightDirection);
         float dayBlend = smoothstep(-0.1, 0.16, sunAmount);
-        float daylight = 0.2 + max(sunAmount, 0.0) * 1.08;
-        vec3 dayColor = texture2D(dayMap, vUv).rgb;
+        float daylight = 0.24 + max(sunAmount, 0.0) * 1.06;
+        vec3 staticDay = texture2D(dayMap, vUv).rgb;
+        vec3 neighborAverage = (
+          texture2D(dayMap, vUv + vec2(dayTexelSize.x, 0.0)).rgb
+          + texture2D(dayMap, vUv - vec2(dayTexelSize.x, 0.0)).rgb
+          + texture2D(dayMap, vUv + vec2(0.0, dayTexelSize.y)).rgb
+          + texture2D(dayMap, vUv - vec2(0.0, dayTexelSize.y)).rgb
+        ) * 0.25;
+        staticDay = clamp(staticDay + (staticDay - neighborAverage) * surfaceDetail, 0.0, 1.24);
+        vec3 liveDay = texture2D(liveMap, vUv).rgb;
+        vec3 dayColor = blendLiveEarthSurface(staticDay, liveDay, liveMix);
         vec3 nightSample = texture2D(nightMap, vUv).rgb;
         float cityLight = smoothstep(0.028, 0.62, max(nightSample.r, max(nightSample.g, nightSample.b)));
-        vec3 nightColor = nightSample * (2.15 + cityLight * 1.45);
+        vec3 nightColor = nightSample * (2.45 + cityLight * 1.7);
         float oceanMask = smoothstep(0.035, 0.22, dayColor.b - max(dayColor.r, dayColor.g) * 0.72);
         vec3 reflected = reflect(-lightDirection, normal);
         float specular = pow(max(dot(reflected, viewDirection), 0.0), 72.0) * oceanMask * max(sunAmount, 0.0);
         float twilight = exp(-abs(sunAmount) * 24.0) * pow(1.0 - abs(dot(normal, viewDirection)), 1.4);
         float limb = pow(1.0 - max(dot(normal, viewDirection), 0.0), 2.4);
-        vec3 shadowSurface = dayColor * 0.035 + nightColor;
+        vec3 shadowSurface = dayColor * 0.12 + nightColor;
         vec3 color = mix(shadowSurface, dayColor * daylight, dayBlend);
         color += vec3(0.42, 0.66, 1.0) * specular * 0.82;
-        color += vec3(1.0, 0.25, 0.055) * twilight * 0.28;
+        color += vec3(1.0, 0.25, 0.055) * twilight * 0.18;
         color += vec3(0.025, 0.075, 0.15) * limb * (0.35 + dayBlend * 0.65);
         gl_FragColor = vec4(color, opacity);
         #include <tonemapping_fragment>
@@ -483,6 +571,10 @@ function createEarth() {
   loadTexture(TEXTURE_SOURCES.earth, 'Blue Marble Earth', (texture) => {
     const previous = material.uniforms.dayMap.value;
     material.uniforms.dayMap.value = texture;
+    if (material.uniforms.liveMap.value === previous) material.uniforms.liveMap.value = texture;
+    const width = texture.image?.naturalWidth || texture.image?.width || (compactMode ? 2048 : 5400);
+    const height = texture.image?.naturalHeight || texture.image?.height || Math.round(width / 2);
+    material.uniforms.dayTexelSize.value.set(1 / width, 1 / height);
     if (previous?.isCanvasTexture) previous.dispose();
   });
   loadTexture(TEXTURE_SOURCES.earthNight, 'Black Marble Earth at night', (texture) => {
@@ -548,7 +640,7 @@ function createAtmosphere() {
         float terminator = exp(-abs(sunAmount) * 18.0);
         float forwardScatter = pow(max(dot(viewDirection, -normalize(sunDirection)), 0.0), 7.0);
         vec3 color = mix(vec3(0.09, 0.28, 0.92), vec3(0.34, 0.72, 1.0), daylight);
-        color += vec3(1.0, 0.2, 0.035) * terminator * 0.34;
+        color += vec3(1.0, 0.2, 0.035) * terminator * 0.22;
         color += vec3(0.52, 0.72, 1.0) * forwardScatter * 0.16;
         float alpha = (rayleigh * 0.72 + outerHaze * 0.38) * intensity * (0.26 + daylight * 0.74);
         gl_FragColor = vec4(color, alpha);
@@ -1458,14 +1550,66 @@ function createSolarSystem() {
   };
 }
 
-function computeCamera(scale, delta) {
-  const planetTransition = smoothstep(0, 190, scale);
-  const moonTransition = smoothstep(130, 360, scale);
-  const solarTransition = smoothstep(300, 800, scale);
-  const galaxyTransition = smoothstep(760, 1120, scale);
-  const localTransition = smoothstep(1380, MAX_SCALE, scale);
+function updateTransitionRig(delta) {
+  if (reduceMotion) {
+    transitionRig.scale = state.scale;
+    transitionRig.velocity = 0;
+    transitionRig.motion = 0;
+    transitionRig.direction = 0;
+    return;
+  }
 
-  const nearDistance = compactMode ? 46 : 10.2;
+  const localStep = controls.getScaleStep(state.scale);
+  const scaleGap = state.targetScale - state.scale;
+  const intendedVelocity = Math.abs(state.zoomVelocity) > 0.01 ? state.zoomVelocity : scaleGap * 4;
+  const motionTarget = Math.max(
+    clamp(Math.abs(state.zoomVelocity) / Math.max(localStep * 5.8, 1), 0, 1),
+    clamp(Math.abs(scaleGap) / Math.max(localStep * 1.45, 1), 0, 1)
+  );
+  const motionResponse = motionTarget > transitionRig.motion ? 10.5 : 4.8;
+  transitionRig.motion = damp(transitionRig.motion, motionTarget, motionResponse, delta);
+  transitionRig.direction = damp(
+    transitionRig.direction,
+    Math.abs(intendedVelocity) > 0.05 ? Math.sign(intendedVelocity) : 0,
+    7.2,
+    delta
+  );
+
+  // A critically damped camera-scale spring gives the scene, camera and copy a
+  // shared visual clock. It trails a fast zoom slightly, but never overshoots a
+  // stage boundary when the wheel stops.
+  const smoothTime = mix(0.145, 0.095, transitionRig.motion);
+  const omega = 2 / smoothTime;
+  const x = omega * delta;
+  const decay = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  const originalTarget = state.scale;
+  const previousScale = transitionRig.scale;
+  const maximumChange = mix(620, 3200, transitionRig.motion) * smoothTime;
+  const change = clamp(transitionRig.scale - originalTarget, -maximumChange, maximumChange);
+  const adjustedTarget = transitionRig.scale - change;
+  const temporary = (transitionRig.velocity + omega * change) * delta;
+  transitionRig.velocity = (transitionRig.velocity - omega * temporary) * decay;
+  transitionRig.scale = adjustedTarget + (change + temporary) * decay;
+
+  if ((originalTarget - previousScale > 0) === (transitionRig.scale > originalTarget)) {
+    transitionRig.scale = originalTarget;
+    transitionRig.velocity = 0;
+  }
+  transitionRig.scale = clamp(transitionRig.scale, 0, MAX_SCALE);
+  if (Math.abs(transitionRig.scale - originalTarget) < 0.002 && Math.abs(transitionRig.velocity) < 0.02) {
+    transitionRig.scale = originalTarget;
+    transitionRig.velocity = 0;
+  }
+}
+
+function computeCamera(scale, delta) {
+  const planetTransition = smootherstep(0, 190, scale);
+  const moonTransition = smootherstep(130, 360, scale);
+  const solarTransition = smootherstep(300, 800, scale);
+  const galaxyTransition = smootherstep(760, 1120, scale);
+  const localTransition = smootherstep(1380, MAX_SCALE, scale);
+
+  const nearDistance = compactMode ? 46 : 17.2;
   const planetDistance = compactMode ? 112 : 78;
   let distance = mix(mix(nearDistance, planetDistance, planetTransition), 215, solarTransition);
   distance = mix(distance, 240, galaxyTransition);
@@ -1476,16 +1620,19 @@ function computeCamera(scale, delta) {
   let fov = mix(mix(nearFov, planetFov, planetTransition), 48, solarTransition);
   fov = mix(fov, 47, galaxyTransition);
   fov = mix(fov, compactMode ? 52 : 49, localTransition);
+  const kineticFov = transitionRig.motion * transitionRig.direction * (compactMode ? 1.05 : 1.55);
+  fov += kineticFov;
 
-  let orbitAngle = mix(-0.28, -0.58, galaxyTransition);
+  let orbitAngle = mix(-0.28, -0.58, galaxyTransition) + transitionRig.motion * transitionRig.direction * 0.012;
   orbitAngle = mix(orbitAngle, -0.06, localTransition) + state.orbitYaw;
   let elevation = mix(0.18, 1.16, galaxyTransition);
   elevation = clamp(mix(elevation, 0.38, localTransition) + state.orbitPitch, -0.14, 1.42);
 
-  const solarCenter = new THREE.Vector3(mix(0, 18, moonTransition), 0, mix(0, -8, solarTransition));
-  const galaxyCenter = new THREE.Vector3(0, 0, -60);
-  const localCenter = new THREE.Vector3(20, -18, -78);
-  targetLookAt.copy(solarCenter).lerp(galaxyCenter, galaxyTransition).lerp(localCenter, localTransition);
+  cameraSolarCenter.set(mix(0, 18, moonTransition), 0, mix(0, -8, solarTransition));
+  targetLookAt
+    .copy(cameraSolarCenter)
+    .lerp(cameraGalaxyCenter, galaxyTransition)
+    .lerp(cameraLocalCenter, localTransition);
 
   targetPosition.set(
     targetLookAt.x + Math.sin(orbitAngle) * distance,
@@ -1494,7 +1641,7 @@ function computeCamera(scale, delta) {
   );
 
   if (reduceMotion) camera.fov = fov;
-  else camera.fov += (fov - camera.fov) * (1 - Math.exp(-7.5 * delta));
+  else camera.fov = damp(camera.fov, fov, mix(8.4, 5.6, transitionRig.motion), delta);
   camera.updateProjectionMatrix();
 }
 
@@ -1511,21 +1658,23 @@ function setGroupOpacity(group, opacity) {
 }
 
 function updateVisibility(scale) {
-  const moonFade = smoothstep(135, 225, scale) * (1 - smoothstep(370, 520, scale));
-  const mainPlanetFade = 1 - smoothstep(390, 540, scale);
-  const solarFadeIn = smoothstep(330, 520, scale);
-  const solarFadeOut = 1 - smoothstep(850, 1110, scale);
+  const moonFade = smootherstep(125, 235, scale) * (1 - smootherstep(360, 535, scale));
+  const mainPlanetFade = 1 - smootherstep(375, 555, scale);
+  const solarFadeIn = smootherstep(315, 535, scale);
+  const solarFadeOut = 1 - smootherstep(835, 1130, scale);
   const solarOpacity = solarFadeIn * solarFadeOut;
-  galaxyOpacity = smoothstep(790, 1080, scale);
-  localGroupOpacity = smoothstep(1320, 1600, scale);
+  galaxyOpacity = smootherstep(760, 1110, scale);
+  localGroupOpacity = smootherstep(1290, 1635, scale);
 
-  const planetScale = mix(1, 0.45, smoothstep(115, 360, scale));
+  const planetScale = mix(1, 0.45, smootherstep(105, 375, scale));
   planetGroup.scale.setScalar(planetScale);
   planetGroup.visible = mainPlanetFade > 0.01;
   earth.material.uniforms.opacity.value = mainPlanetFade;
-  clouds.material.opacity = 0.58 * mainPlanetFade;
+  const liveSurfaceMix = earth.material.uniforms.liveMix.value;
+  const closeSurfaceCloudOpacity = mix(0.2, 0.58, smootherstep(28, 132, scale));
+  clouds.material.opacity = closeSurfaceCloudOpacity * mix(1, 0.32, liveSurfaceMix) * mainPlanetFade;
   atmosphere.material.uniforms.intensity.value = 0.98 * mainPlanetFade;
-  aurora.material.uniforms.intensity.value = 0.64 * mainPlanetFade;
+  aurora.material.uniforms.intensity.value = 0.48 * mainPlanetFade;
 
   moonSystem.root.visible = moonFade > 0.01;
   moonSystem.moon.material.transparent = true;
@@ -1536,19 +1685,25 @@ function updateVisibility(scale) {
   setGroupOpacity(solarGroup, solarOpacity);
   solarSystem.solarLight.intensity = 245 * solarOpacity;
 
-  const backdropIn = smoothstep(700, 900, scale);
-  const backdropOut = 1 - smoothstep(980, 1190, scale);
+  const backdropIn = smootherstep(675, 920, scale);
+  const backdropOut = 1 - smootherstep(955, 1210, scale);
   nasaBackdrop.material.opacity = nasaBackdrop.userData.baseOpacity * backdropIn * backdropOut;
 
   cosmicGroup.visible = galaxyOpacity > 0.001;
-  starField.material.uniforms.opacity.value = mix(0.58, 0.88, smoothstep(170, 760, scale));
-  galaxyGlow.material.opacity = mix(0.1, 0.17, smoothstep(180, 720, scale)) * (1 - galaxyOpacity * 0.76);
-  const veilStrength = mix(0.72, 1, smoothstep(260, 720, scale)) * (1 - smoothstep(980, 1420, scale));
+  starField.material.uniforms.opacity.value = mix(0.58, 0.88, smootherstep(160, 780, scale));
+  galaxyGlow.material.opacity = mix(0.1, 0.17, smootherstep(170, 740, scale)) * (1 - galaxyOpacity * 0.76);
+  const veilStrength = mix(0.72, 1, smootherstep(245, 740, scale)) * (1 - smootherstep(960, 1440, scale));
   setGroupOpacity(deepSpaceVeil, veilStrength);
-  scene.fog.density = mix(0.00082, 0.000035, smoothstep(250, 900, scale));
-  renderer.toneMappingExposure = mix(1.18, 1.01, smoothstep(920, 1380, scale));
+  scene.fog.density = mix(0.00082, 0.000035, smootherstep(230, 930, scale));
+  renderer.toneMappingExposure = mix(1.18, 1.01, smootherstep(890, 1410, scale));
 
-  locationMarker.classList.toggle('is-visible', scale >= 1050 && scale < 1480);
+  const markerOpacity = smootherstep(1015, 1090, scale) * (1 - smootherstep(1415, 1510, scale));
+  locationMarker.style.setProperty('--marker-opacity', markerOpacity.toFixed(3));
+  locationMarker.classList.toggle('is-visible', markerOpacity > 0.002);
+  if (earthRealtimeStatus) {
+    const realtimeOpacity = 1 - smootherstep(155, 360, scale);
+    earthRealtimeStatus.style.setProperty('--earth-realtime-opacity', realtimeOpacity.toFixed(3));
+  }
   scaleBar.style.transform = `scaleX(${clamp(scale / MAX_SCALE, 0, 1).toFixed(4)})`;
 }
 
@@ -1556,6 +1711,27 @@ function updateCopy(scale) {
   const nextStageIndex = copy.findIndex((item) => scale <= item.max);
   const resolvedStageIndex = nextStageIndex === -1 ? copy.length - 1 : nextStageIndex;
   const active = copy[resolvedStageIndex];
+  const stageStart = resolvedStageIndex === 0 ? 0 : copy[resolvedStageIndex - 1].max;
+  const stageEnd = resolvedStageIndex === copy.length - 1 ? MAX_SCALE : Math.min(active.max, MAX_SCALE);
+  const stageSpan = Math.max(stageEnd - stageStart, 1);
+  const distanceFromStart = resolvedStageIndex === 0 ? Number.POSITIVE_INFINITY : Math.abs(scale - stageStart);
+  const distanceFromEnd = resolvedStageIndex === copy.length - 1 ? Number.POSITIVE_INFINITY : Math.abs(stageEnd - scale);
+  const boundaryDistance = Math.min(distanceFromStart, distanceFromEnd);
+  const boundaryWidth = clamp(stageSpan * 0.18, 18, 54);
+  const stagePresence = reduceMotion
+    ? 1
+    : mix(0.08, 1, smootherstep(0, boundaryWidth, boundaryDistance));
+  const localStageProgress = clamp((scale - stageStart) / stageSpan, 0, 1);
+  const boundarySide = localStageProgress < 0.5 ? -1 : 1;
+  const travelDirection = Math.abs(transitionRig.direction) > 0.05 ? Math.sign(transitionRig.direction) : 1;
+  const stageShift = reduceMotion ? 0 : (1 - stagePresence) * boundarySide * travelDirection * 7;
+  const stageBlur = reduceMotion ? 0 : (1 - stagePresence) * 0.78;
+  const veilOpacity = reduceMotion ? 0 : transitionRig.motion * 0.105 + (1 - stagePresence) * 0.055;
+
+  experience.style.setProperty('--stage-presence', stagePresence.toFixed(3));
+  experience.style.setProperty('--stage-shift', `${stageShift.toFixed(2)}px`);
+  experience.style.setProperty('--stage-blur', `${stageBlur.toFixed(2)}px`);
+  experience.style.setProperty('--transition-veil-opacity', veilOpacity.toFixed(3));
 
   if (resolvedStageIndex !== activeStageIndex) {
     activeStageIndex = resolvedStageIndex;
@@ -1572,19 +1748,6 @@ function updateCopy(scale) {
       tick.classList.toggle('is-passed', index < activeStageIndex);
     });
     stageStatus.textContent = `${active.layer}。${active.unit}。${active.zh}`;
-
-    if (!reduceMotion) {
-      [scaleReadoutPanel, captionPanel].forEach((panel, panelIndex) => {
-        panel.getAnimations().forEach((animation) => animation.cancel());
-        panel.animate(
-          [
-            { opacity: 0.48, transform: `translateY(${panelIndex === 0 ? -3 : 5}px)` },
-            { opacity: 1, transform: 'translateY(0)' }
-          ],
-          { duration: 380, easing: 'cubic-bezier(.2,.72,.2,1)' }
-        );
-      });
-    }
   }
 
   if (scale <= 70) {
@@ -1613,12 +1776,27 @@ function updateInteractions(delta) {
   const input = controls.update(delta, controlsFrame);
   state.scale = input.scale;
   state.targetScale = input.targetScale;
+  state.zoomVelocity = input.zoomVelocity;
   state.orbitYaw = input.yaw;
   state.orbitPitch = input.pitch;
 }
 
-function animateBodies(delta) {
-  milkyWaySkyBand.update(delta, state.scale);
+function animateBodies(delta, visualScale) {
+  liveEarthController.update();
+  const liveMixResponse = reduceMotion ? 40 : 2.4;
+  const liveDetailBlend = mix(0.06, 1, smootherstep(42, 175, visualScale));
+  earth.material.uniforms.liveMix.value = damp(
+    earth.material.uniforms.liveMix.value,
+    liveEarthMixTarget * liveDetailBlend,
+    liveMixResponse,
+    delta
+  );
+  earth.material.uniforms.surfaceDetail.value = mix(
+    compactMode ? 0.24 : 0.96,
+    compactMode ? 0.12 : 0.32,
+    smootherstep(55, 205, visualScale)
+  );
+  milkyWaySkyBand.update(delta, visualScale);
 
   if (reduceMotion) {
     aurora.material.uniforms.time.value = 0;
@@ -1677,17 +1855,21 @@ function animateBodies(delta) {
 function render() {
   const delta = Math.min(clock.getDelta(), 0.033);
   updateInteractions(delta);
-  computeCamera(state.scale, delta);
-  updateVisibility(state.scale);
-  updateCopy(state.scale);
-  animateBodies(delta);
+  updateTransitionRig(delta);
+  const visualScale = transitionRig.scale;
+  computeCamera(visualScale, delta);
+  updateVisibility(visualScale);
+  updateCopy(visualScale);
+  animateBodies(delta, visualScale);
 
   if (reduceMotion) {
     currentPosition.copy(targetPosition);
     currentLookAt.copy(targetLookAt);
   } else {
-    currentPosition.lerp(targetPosition, 1 - Math.exp(-7.6 * delta));
-    currentLookAt.lerp(targetLookAt, 1 - Math.exp(-9.2 * delta));
+    const positionResponse = mix(8.8, 6.8, transitionRig.motion);
+    const lookResponse = mix(10.6, 8.4, transitionRig.motion);
+    currentPosition.lerp(targetPosition, 1 - Math.exp(-positionResponse * delta));
+    currentLookAt.lerp(targetLookAt, 1 - Math.exp(-lookResponse * delta));
   }
   camera.position.copy(currentPosition);
   camera.lookAt(currentLookAt);
@@ -1718,6 +1900,11 @@ window.__scaleBeyond = {
     controls.setScale(nextScale, { immediate: true, clearVelocity: true });
     state.scale = nextScale;
     state.targetScale = nextScale;
+    state.zoomVelocity = 0;
+    transitionRig.scale = nextScale;
+    transitionRig.velocity = 0;
+    transitionRig.motion = 0;
+    transitionRig.direction = 0;
   },
   getState() {
     return {
@@ -1725,6 +1912,19 @@ window.__scaleBeyond = {
       targetScale: state.targetScale,
       layer: layerName.textContent,
       assets: assetStatus.textContent,
+      liveEarth: liveEarthSnapshot
+        ? (() => {
+            const currentLiveEarth = liveEarthController.getState();
+            return {
+              phase: currentLiveEarth.phase,
+              date: currentLiveEarth.date,
+              satellite: currentLiveEarth.satellite,
+              quality: currentLiveEarth.budget.tier,
+              subsolarLatitude: currentLiveEarth.solar?.subsolarLatitudeDegrees ?? null,
+              subsolarLongitude: currentLiveEarth.solar?.subsolarLongitudeDegrees ?? null
+            };
+          })()
+        : null,
       skyBandLoaded: milkyWaySkyBand.loaded,
       reducedMotion: reduceMotion,
       yaw: state.orbitYaw,
@@ -1733,5 +1933,9 @@ window.__scaleBeyond = {
     };
   }
 };
+
+window.addEventListener('pagehide', (event) => {
+  if (!event.persisted) liveEarthController.dispose();
+});
 
 render();

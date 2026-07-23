@@ -7,6 +7,10 @@
   --line: rgba(181, 207, 239, 0.2);
   --line-strong: rgba(158, 202, 255, 0.44);
   --panel: rgba(3, 8, 18, 0.42);
+  --stage-presence: 1;
+  --stage-shift: 0px;
+  --stage-blur: 0px;
+  --transition-veil-opacity: 0;
   --safe-top: max(18px, env(safe-area-inset-top));
   --safe-right: max(18px, env(safe-area-inset-right));
   --safe-bottom: max(18px, env(safe-area-inset-bottom));
@@ -69,6 +73,20 @@ body,
   content: "";
 }
 
+.experience::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 48%, rgba(126, 174, 255, 0.28), rgba(48, 91, 165, 0.07) 38%, transparent 72%),
+    linear-gradient(90deg, transparent 8%, rgba(115, 170, 255, 0.08) 50%, transparent 92%);
+  content: "";
+  opacity: var(--transition-veil-opacity);
+  transition: opacity 90ms linear;
+  will-change: opacity;
+}
+
 .scene canvas {
   display: block;
   width: 100%;
@@ -86,6 +104,18 @@ body,
   z-index: 2;
   pointer-events: none;
   text-shadow: 0 2px 22px rgba(0, 0, 0, 0.72);
+}
+
+.scale-readout,
+.caption {
+  opacity: var(--stage-presence);
+  filter: blur(var(--stage-blur));
+  transform: translate3d(0, var(--stage-shift), 0);
+  transition:
+    opacity 90ms linear,
+    filter 120ms linear,
+    transform 150ms cubic-bezier(0.2, 0.72, 0.2, 1);
+  will-change: opacity, filter, transform;
 }
 
 .intro {
@@ -188,6 +218,28 @@ h1 {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.earth-realtime-status {
+  display: block;
+  margin-top: 10px;
+  color: rgba(155, 210, 255, 0.78);
+  font-size: 0.59rem;
+  font-weight: 560;
+  letter-spacing: 0.075em;
+  line-height: 1.45;
+  opacity: var(--earth-realtime-opacity, 1);
+  text-transform: uppercase;
+  transition: color 240ms ease, opacity 260ms ease;
+}
+
+.earth-realtime-status[data-state="ready"],
+.earth-realtime-status[data-state="stale"] {
+  color: rgba(161, 225, 198, 0.88);
+}
+
+.earth-realtime-status[data-state="fallback"] {
+  color: rgba(218, 230, 248, 0.66);
 }
 
 .caption {
@@ -320,7 +372,7 @@ h1 {
 }
 
 .location-marker.is-visible {
-  opacity: 1;
+  opacity: var(--marker-opacity, 1);
   transform: translateY(-50%);
 }
 
